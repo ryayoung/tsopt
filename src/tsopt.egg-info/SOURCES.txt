@@ -1,0 +1,12 @@
+LICENSE.txt
+README.md
+setup.cfg
+setup.py
+src/tsopt/__init__.py
+src/tsopt/data.py
+src/tsopt/model.py
+src/tsopt.egg-info/PKG-INFO
+src/tsopt.egg-info/SOURCES.txt
+src/tsopt.egg-info/dependency_links.txt
+src/tsopt.egg-info/requires.txt
+src/tsopt.egg-info/top_level.txt

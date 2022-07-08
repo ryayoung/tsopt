@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Jul 06, 2022
+# Last Modified:  Jul 08, 2022
 import pandas as pd
 import numpy as np
 import re
@@ -10,18 +10,22 @@ class SourceData:
     for 3 stage transportation problems.
     """
     def __init__(self,
-            tbl_c1, tbl_c2, tbl_capacity, tbl_demand,
-            from_csv=False, excel_file=None, stages=["plant", "distributor", "warehouse"]
+            tbl_c1: str or pd.DataFrame,
+            tbl_c2: str or pd.DataFrame,
+            tbl_capacity: str or pd.DataFrame,
+            tbl_demand: str or pd.DataFrame,
+            excel_file=None, from_csv=False,
+            layers=["plant", "distributor", "warehouse"]
         ):
 
         self.from_csv = from_csv
         self.excel_file = pd.ExcelFile(excel_file) if excel_file else None
 
-        self.stages  = [stage.capitalize() for stage in stages]
+        self.layers  = [stage.capitalize() for stage in layers]
 
         # Abbreviate stage names with the first letter of each word (space, period, dash, or underscore delimited)
         # So stage 'manufacturing-plant' is abbreviated as 'MP'
-        self.stage_abbrevs = ["".join([s[0] for s in re.split("[ -\._]", stage)]).upper() for stage in self.stages]
+        self.stage_abbrevs = ["".join([s[0] for s in re.split("[ -\._]", stage)]).upper() for stage in self.layers]
 
         # Process user data into dataframes, handling unknown table formatting
         for saved_df, tblname in zip(

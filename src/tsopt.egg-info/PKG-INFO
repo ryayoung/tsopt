@@ -1,0 +1,42 @@
+Metadata-Version: 2.1
+Name: tsopt
+Version: 0.0.1
+Summary: Easily solve any multi-stage transshipment cost minimization optimization problem
+Home-page: https://github.com/ryayoung/tsopt
+Author: Ryan Young
+Author-email: ryanyoung99@live.com
+License: MIT
+Keywords: opendata socrata colorado crime
+Platform: UNKNOWN
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3.9
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE.txt
+
+<h1> tsopt &nbsp;&nbsp;&nbsp; <a href="https://pypi.org/project/tsopt/" alt="Version"> <img src="https://img.shields.io/pypi/v/tsopt.svg" /></a> </h1>
+
+#### [View Updated Documentation](https://github.com/ryayoung/tsopt)
+
+Source code is [here](https://github.com/ryayoung/tsopt/tree/main/src/tsopt)
+
+</br>
+
+> Something...
+
+<br>
+
+## Install & Use
+
+```text
+pip install tsopt
+```
+```py
+import tsopt as ts
+```
+
+> **Must have Python 3.9+**
+
+---
+
+
