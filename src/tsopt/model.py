@@ -36,8 +36,6 @@ class Model(SourceData):
             setattr(self.mod, d, pe.Var(self.DV[2], domain = pe.NonNegativeReals))
 
         # Final decision variables stored when model is run
-        output_stage1 = pd.DataFrame()
-        output_stage2 = pd.DataFrame()
         self.obj_val = None
         self.slack = {} # Dict where each key is constraint name, val is slack
 
@@ -124,6 +122,114 @@ class Model(SourceData):
         display(self.outputs[0].copy().astype(np.int64))
         print(f"{self.layers[1]} to {self.layers[2]}:")
         display(self.outputs[1].copy().astype(np.int64))
+
+
+    # PLOTTING ---------------------------------------------------------------
+    def label_edges(self,
+            sum_inflow:bool,
+            sum_outflow:bool,
+            inflow_nodes:list,
+            outflow_nodes:list,
+            inflow_abbrev:str,
+            ):
+        '''
+        Helper function for plot_stage to create a column that
+        accurately labels each edge
+        '''
+        if sum_outflow and sum_inflow:
+            route = inflow_abbrev
+        elif sum_inflow:
+            route = [inflow_abbrev] * len(outflow_nodes)
+        elif sum_outflow:
+            route = inflow_nodes
+        else:
+            route = inflow_nodes * len(outflow_nodes)
+
+        route = pd.Series(route) + '->' + pd.Series(outflow_nodes)
+        return route
+
+
+    def stage_quantity_table(self, stage, sum_inflow=False, sum_outflow=False):
+        '''
+        Summarizes stage quantities
+        '''
+        df = self.outputs[stage-1]
+        label_pref = (self.stage_abbrevs[stage-1], self.stage_abbrevs[stage])
+
+        if sum_outflow:
+            df = df.sum(axis=1).to_frame().rename(columns={0:label_pref[1]})
+        if sum_inflow:
+            df = df.sum().to_frame().T.rename(index={0:label_pref[0]})
+
+        df = pd.melt(df).rename(columns={'variable':'outflow_nodes', 'value':'units'})
+        df['Route'] = self.label_edges(
+                sum_inflow, sum_outflow, self.DV[stage-1], df.outflow_nodes, label_pref[0])
+        return df
+
+
+    def smart_width(self, size:tuple, rows) -> tuple:
+        '''
+        Changes first element of size tuple based on num of rows.
+        Only has effect when number of rows is less than 3
+        '''
+        w, h = size
+        if rows < 3:
+            w = w // 1.5
+        if rows < 2:
+            w = w // 2
+        return (w, h)
+
+
+    def plot_stage_quantity(self, stage=None,
+            sum_inflow=False,
+            sum_outflow=False,
+            dynamic_width=True,
+            figure=dict(),
+            legend=dict(),
+            **kwargs
+            ):
+        # By default, do all stages
+        if stage == None:
+            stage = [i for i in range(1, len(self.outputs)+1)]
+
+        # Do multiple stages
+        if type(stage) == list:
+            if 'ax' in kwargs:
+                raise TypeError("Can't use subplots when passing list of stages. (Can't take 'ax' argument when 'stage' argument is a list)")
+            for s in stage:
+                self.plot_stage_quantity(s, sum_inflow, sum_outflow, dynamic_width, figure, legend, **kwargs)
+            return
+
+        # Defaults based on stage
+        if legend == dict():
+            legend = dict(title=self.layers[stage], loc='upper right')
+        if figure == dict():
+            figure = dict(figsize=(12,5))
+
+        df = self.stage_quantity_table(stage, sum_inflow, sum_outflow)
+        if dynamic_width and 'figsize' in figure:
+            figure['figsize'] = self.smart_width(figure['figsize'], df.shape[0])
+
+        if 'ax' not in kwargs and figure != None:
+            plt.figure(**figure)
+
+        optional = dict()
+        if 'hue' not in kwargs and 'color' not in kwargs:
+            if sum_inflow == False and sum_outflow == False:
+                optional['hue'] = 'outflow_nodes'
+            else:
+                optional['color'] = '#1f77b4'
+
+        result = sns.barplot(x='Route', y='units', data=df, dodge=False, **kwargs, **optional) \
+            .set(xlabel=None, title=f'Quantity: {self.layers[stage-1]} -> {self.layers[stage]}')
+
+        if sum_inflow == False and sum_outflow == False and legend != None:
+            if 'ax' in kwargs:
+                kwargs['ax'].legend(**legend)
+            else:
+                plt.legend(**legend)
+
+        return result
 
 
 
