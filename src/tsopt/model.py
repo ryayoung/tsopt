@@ -9,8 +9,8 @@ from tsopt.data import SourceData
 
 class Model(SourceData):
     """
-    Pyomo wrapper for 3-stage transshipment optimization problems,
-    where you have 3 location layers, and product transport between them.
+    Pyomo wrapper for multi-stage transshipment optimization problems,
+    where you have 3 or more location layers, and product transport between them.
     For example, you have 3 manufacturing plants, 2 distributors, and 5 warehouses,
     and you need to minimize cost from plant to distributor and from distributor to warehouse,
     while staying within capacity and meeting demand requirements.
@@ -25,15 +25,14 @@ class Model(SourceData):
         # self.cell_constraints = cell_constraints
 
         # Set DV indexes.
-        self.DV = [list(x) for x in [self.c1.index, self.c1.columns, self.c2.columns]]
+        self.DV = [list(self.costs[i].index) for i in self.costs] + list(self.costs[-1].columns)
 
         self.mod = pe.ConcreteModel()
 
         # Declare the model's pe.Var() decision variables.
-        for x in self.DV[0]:
-            setattr(self.mod, x, pe.Var(self.DV[1], domain = pe.NonNegativeReals))
-        for d in self.DV[1]:
-            setattr(self.mod, d, pe.Var(self.DV[2], domain = pe.NonNegativeReals))
+        for stg in range(0, len(self.costs)):
+            for node in self.DV[stg]:
+                setattr(self.mod, node, pe.Var(self.DV[stg+1], domain = pe.NonNegativeReals))
 
         # Final decision variables stored when model is run
         self.obj_val = None
@@ -46,43 +45,40 @@ class Model(SourceData):
 
         # Objective function
         products = []
-        for x in self.DV[0]:
-            products += [self.c1.loc[x, i] * getattr(self.mod, x)[i] for i in self.DV[1]]
-        for d in self.DV[1]:
-            products += [self.c2.loc[d, i] * getattr(self.mod, d)[i] for i in self.DV[2]]
+        for i, df in enumerate(self.costs):
+            for node in self.DV[i]:
+                products += [df.loc[node, i] * getattr(self.mod, node)[i] for i in self.DV[i+1]]
 
         self.mod.obj = pe.Objective(expr = sum(products), sense = pe.minimize)
 
         # Capacity constraint
-        for x in self.DV[0]:
-            setattr(self.mod, f"con_{x}", pe.Constraint(
-                expr = sum(getattr(self.mod, x)[d] for d in self.DV[1])
-                    <= self.capacity.loc[x, self.capacity.columns[0]]))
+        for node in self.DV[0]:
+            setattr(self.mod, f"con_{node}", pe.Constraint(
+                expr = sum(getattr(self.mod, node)[d] for d in self.DV[1])
+                    <= self.capacity.loc[node, self.capacity.columns[0]]))
 
         # Demand constraint
-        for w in self.DV[2]:
-            setattr(self.mod, f"con_{w}", pe.Constraint(expr =
-                sum(getattr(self.mod, d)[w] for d in self.DV[1])
-                    >= self.demand.loc[w, self.demand.columns[0]]))
+        for node in self.DV[-1]:
+            setattr(self.mod, f"con_{node}", pe.Constraint(expr =
+                sum(getattr(self.mod, d)[node] for d in self.DV[-2])
+                    >= self.demand.loc[node, self.demand.columns[0]]))
 
-        # Equal flow for both stages
-        for d in self.DV[1]:
-            setattr(self.mod, f"con_{d}", pe.Constraint(expr =
-                sum([getattr(self.mod, d)[w] for w in self.DV[2]])
-                    == sum([getattr(self.mod, x)[d] for x in self.DV[0]])))
+        # Equal flow for all stages
+        for flow in range(1, len(self.DV)-1):
+            for node in self.DV[flow]:
+                setattr(self.mod, f"con_{node}", pe.Constraint(expr =
+                    sum([getattr(self.mod, node)[i] for i in self.DV[flow+1]])
+                        == sum([getattr(self.mod, i)[node] for i in self.DV[flow-1]])))
 
         Model.solver.solve(self.mod)
 
         # Save DV outputs to dataframes
         self.outputs = [
-            pd.DataFrame([
-                [getattr(self.mod, x)[d].value for d in self.DV[1]] for x in self.DV[0]],
-                columns=self.DV[1], index=self.DV[0]
-            ),
-            pd.DataFrame([
-                [getattr(self.mod, d)[w].value for w in self.DV[2]] for d in self.DV[1]],
-                columns=self.DV[2], index=self.DV[1]
-            ),
+                pd.DataFrame([
+                    [getattr(self.mod, node)[node2].value for node2 in self.DV[stg+1]] for node in self.DV[stg]],
+                    columns=self.DV[stg+1], index=self.DV[stg]
+                )
+            for stg in range(0, len(self.costs))
         ]
 
         # Save objective value
@@ -94,18 +90,19 @@ class Model(SourceData):
 
 
     def display(self):
-        st = self.layers
-        descriptions = [f"{st[0]} to {st[1]} costs", f"{st[1]} to {st[2]} costs",
-                        f"Output capacity from {st[0]}", f"Demand required from {st[2]}"]
-        for description, df in zip(descriptions, [self.c1, self.c2, self.capacity, self.demand]):
-            print(description)
+        print(f'Output capacity from {self.layers[0]}')
+        display(self.capacity)
+        print(f'Demand required from {self.layers[-1]}')
+        display(self.demand)
+        for i, df in enumerate(self.costs):
+            print(f'{self.layers[i]} to {self.layers[i+1]} costs')
             display(df)
 
 
     def print_dv_indexes(self):
-        for i, stage in enumerate([self.DV[0], self.DV[1], self.DV[2]]):
-            print(f"{self.layers[i]} stage locations: \n- ", end="")
-            print(*stage, sep=", ")
+        for i, nodes in enumerate(self.DV):
+            print(f"{self.layers[i]}:\n- ", end="")
+            print(*nodes, sep=", ")
 
 
     def print_slack(self):
@@ -118,10 +115,9 @@ class Model(SourceData):
         print("OBJECTIVE VALUE")
         print(f"Minimized Cost: ${self.obj_val}\n")
         print("DECISION VARIABLE QUANTITIES")
-        print(f"{self.layers[0]} to {self.layers[1]}:")
-        display(self.outputs[0].copy().astype(np.int64))
-        print(f"{self.layers[1]} to {self.layers[2]}:")
-        display(self.outputs[1].copy().astype(np.int64))
+        for i, df in enumerate(self.outputs):
+            print(f'{self.layers[i]} -> {self.layers[i+1]}')
+            display(self.outputs[i].copy().astype(np.int64))
 
 
     # PLOTTING ---------------------------------------------------------------
