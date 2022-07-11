@@ -3,8 +3,17 @@ import numpy as np
 import pyomo.environ as pe
 import matplotlib.pyplot as plt
 import seaborn as sns
+from dataclasses import dataclass
 
 from tsopt.data import SourceData
+
+
+@dataclass
+class Solution:
+    obj_val: float
+    slack: dict
+    quantities: list
+
 
 
 class Model(SourceData):
@@ -20,73 +29,136 @@ class Model(SourceData):
     def __init__(self, cell_constraints=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # Optional added constraint: list of dicts
-        # [{sign: <str>, cell1: {stage: <int>, row: <int>, col: <int>}, cell2: {stage: <int>, row: <int>, col: <int>}}]
-        # self.cell_constraints = cell_constraints
+        self.mod = self.new_model()
+        self.DV = [list(df.index) for df in self.costs] + [list(self.costs[-1].columns)]
 
-        # Set DV indexes.
-        self.DV = [list(self.costs[i].index) for i in self.costs] + list(self.costs[-1].columns)
 
-        self.mod = pe.ConcreteModel()
+    def new_model(self) -> pe.ConcreteModel:
+        model = pe.ConcreteModel()
+        self.solution = Solution(0.0, dict(), [])
+        return model
 
-        # Declare the model's pe.Var() decision variables.
-        for stg in range(0, len(self.costs)):
-            for node in self.DV[stg]:
-                setattr(self.mod, node, pe.Var(self.DV[stg+1], domain = pe.NonNegativeReals))
 
-        # Final decision variables stored when model is run
-        self.obj_val = None
-        self.slack = {} # Dict where each key is constraint name, val is slack
+    def add_decision_var(self, name:str, variable:pe.Var or any, domain=pe.NonNegativeReals, **kwargs) -> pe.Var:
+        if type(variable) == pe.Var:
+            setattr(self.mod, name, variable)
+        else:
+            setattr(self.mod, name, pe.Var(variable, domain=domain, **kwargs))
+        return getattr(self.mod, name)
 
-    def run(self):
-        # TO SUPPRESS WARNING: Each time function is called, delete component objects
-        for attr in list(self.mod.component_objects([pe.Constraint, pe.Objective])):
-            self.mod.del_component(getattr(self.mod, str(attr)))
 
-        # Objective function
-        products = []
-        for i, df in enumerate(self.costs):
-            for node in self.DV[i]:
-                products += [df.loc[node, i] * getattr(self.mod, node)[i] for i in self.DV[i+1]]
+    def add_constraint(self, name, constr, prefix=None, **kwargs) -> pe.Constraint:
+        name = name if prefix == None else f'{prefix}_{name}'
+        if type(constr) == pe.Constraint:
+            setattr(self.mod, name, constr, **kwargs)
+        else:
+            setattr(self.mod, name, pe.Constraint(expr=constr))
 
-        self.mod.obj = pe.Objective(expr = sum(products), sense = pe.minimize)
+        return getattr(self.mod, name)
 
-        # Capacity constraint
-        for node in self.DV[0]:
-            setattr(self.mod, f"con_{node}", pe.Constraint(
-                expr = sum(getattr(self.mod, node)[d] for d in self.DV[1])
-                    <= self.capacity.loc[node, self.capacity.columns[0]]))
 
-        # Demand constraint
-        for node in self.DV[-1]:
-            setattr(self.mod, f"con_{node}", pe.Constraint(expr =
-                sum(getattr(self.mod, d)[node] for d in self.DV[-2])
-                    >= self.demand.loc[node, self.demand.columns[0]]))
+    def set_decision_vars(self):
+        for stage in range(0, len(self.costs)):
+            for node in self.DV[stage]:
+                self.add_decision_var(node, self.DV[stage+1])
 
-        # Equal flow for all stages
-        for flow in range(1, len(self.DV)-1):
-            for node in self.DV[flow]:
-                setattr(self.mod, f"con_{node}", pe.Constraint(expr =
-                    sum([getattr(self.mod, node)[i] for i in self.DV[flow+1]])
-                        == sum([getattr(self.mod, i)[node] for i in self.DV[flow-1]])))
 
+    def set_objective(self):
+        total_cost = 0
+        for stage, df in enumerate(self.costs):
+            for node_in in self.DV[stage]:
+                for node_out in self.DV[stage+1]:
+                    total_cost += df.loc[node_in, node_out] * getattr(self.mod, node_in)[node_out]
+        self.mod.obj = pe.Objective(expr = total_cost, sense=pe.minimize)
+
+
+    def set_capacity_constraints(self):
+        first_stg_inputs = self.DV[0]
+        first_stg_outputs = self.DV[1]
+        for node_in in first_stg_inputs:
+            capacity = self.capacity.loc[node_in, self.capacity.columns[0]]
+            expr = capacity >= sum(getattr(self.mod, node_in)[node_out] for node_out in first_stg_outputs)
+            self.add_constraint(node_in, expr, 'capacity')
+
+
+    def set_demand_constraints(self):
+        final_stg_inputs = self.DV[-2]
+        final_stg_outputs = self.DV[-1]
+        for node_out in final_stg_outputs:
+            demand = self.demand.loc[node_out, self.demand.columns[0]]
+            expr = demand <= sum(getattr(self.mod, node_in)[node_out] for node_in in final_stg_inputs)
+            self.add_constraint(node_out, expr, 'demand')
+
+
+    def set_flow_constraints(self):
+        '''
+        Equal flow for all stages.
+        A flow is a layer which takes input from a previous layer and
+        outputs to the next layer. If there are 3 layers, then there must
+        be two stages, and one flow: the middle layer.
+        '''
+        flow_layer_indexes = range(1, len(self.DV)-1)
+        for flow in flow_layer_indexes:
+            for node_curr in self.DV[flow]:
+                input_nodes = self.DV[flow-1]
+                output_nodes = self.DV[flow+1]
+                inflow = sum([getattr(self.mod, node_in)[node_curr] for node_in in input_nodes])
+                outflow = sum([getattr(self.mod, node_curr)[node_out] for node_out in output_nodes])
+                expr = inflow == outflow
+                self.add_constraint(node_curr, expr, 'flow')
+
+
+    def get_quantities(self) -> list:
+        quantities = []
+        stage_indexes = range(0, len(self.costs))
+        for stage in stage_indexes:
+            input_nodes = self.DV[stage]
+            output_nodes = self.DV[stage+1]
+            values = [
+                    [getattr(self.mod, node_in)[node_out].value for node_out in output_nodes]
+                for node_in in input_nodes
+            ]
+            quantities.append(pd.DataFrame(values, columns=output_nodes, index=input_nodes))
+
+        return quantities
+
+
+    def get_slack(self) -> dict:
+        slack = dict()
+        for c in self.mod.component_objects(pe.Constraint):
+            slack[str(c).split("_")[1]] = c.slack()
+        return slack
+
+
+    def build_model(self) -> pe.ConcreteModel:
+        self.mod = self.new_model()
+        self.set_decision_vars()
+        self.set_objective()
+        self.set_capacity_constraints()
+        self.set_demand_constraints()
+        self.set_flow_constraints()
+        return self.mod
+
+
+    def solve_model(self) -> Solution:
         Model.solver.solve(self.mod)
 
         # Save DV outputs to dataframes
-        self.outputs = [
-                pd.DataFrame([
-                    [getattr(self.mod, node)[node2].value for node2 in self.DV[stg+1]] for node in self.DV[stg]],
-                    columns=self.DV[stg+1], index=self.DV[stg]
-                )
-            for stg in range(0, len(self.costs))
-        ]
+        quantities = self.get_quantities()
 
         # Save objective value
-        self.obj_val = round(self.mod.obj.expr(), 2)
+        obj_val = self.mod.obj.expr()
 
         # Save slack to dictionary with constraint suffix
-        for c in self.mod.component_objects(pe.Constraint):
-            self.slack[str(c).split("_")[1]] = c.slack()
+        slack = self.get_slack()
+
+        self.solution = Solution(obj_val, slack, quantities)
+        return self.solution
+
+
+    def run(self) -> Solution:
+        self.build_model()
+        return self.solve_model()
 
 
     def display(self):
@@ -106,9 +178,9 @@ class Model(SourceData):
 
 
     def print_slack(self):
-        has_slack = [c for c in self.slack.keys() if self.slack[c] != 0]
+        has_slack = [c for c in self.solution.slack.keys() if self.solution.slack[c] != 0]
         print(f"The following {len(has_slack)} constraints have slack:")
-        print(*[f"{c}: {self.slack[c]}" for c in has_slack], sep="\n")
+        print(*[f"{c}: {self.solution.slack[c]}" for c in has_slack], sep="\n")
 
 
     def print_result(self):
@@ -116,7 +188,7 @@ class Model(SourceData):
         print(f"Minimized Cost: ${self.obj_val}\n")
         print("DECISION VARIABLE QUANTITIES")
         for i, df in enumerate(self.outputs):
-            print(f'{self.layers[i]} -> {self.layers[i+1]}')
+            print(f'STAGE {i}: {self.layers[i]} -> {self.layers[i+1]}')
             display(self.outputs[i].copy().astype(np.int64))
 
 

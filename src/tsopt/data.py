@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Jul 09, 2022
+# Last Modified:  Jul 11, 2022
 import pandas as pd
 import numpy as np
 import re
@@ -147,13 +147,13 @@ class SourceData:
         '''
         # Start by reading in the file with headers=None, index_col=None.
         # This way ALL provided data will be placed INSIDE the dataframe as values
-        df = self.read_file(tblname)
+        df = self.read_file(table)
 
         # Find the headers and indexes, if any exist
         headers, indexes = self.sheet_format(df)
 
         # Now read the file again, passing index and header locations
-        df = self.read_file(tblname, idx=indexes, hdr=headers)
+        df = self.read_file(table, idx=indexes, hdr=headers)
 
         df.index.name = None
         return df
