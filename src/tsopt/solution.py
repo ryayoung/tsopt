@@ -4,6 +4,7 @@
 import pandas as pd
 import numpy as np
 import pyomo.environ as pe
+from pyomo.opt import SolverResults
 import matplotlib.pyplot as plt
 import seaborn as sns
 from dataclasses import dataclass
@@ -14,10 +15,17 @@ from tsopt.data import DV
 
 @dataclass
 class Solution:
+    '''
+    Stores the results from a solved Model in a format
+    that's easier to access.
+    Provides ability to pretty-print important metrics and
+    dynamically create charts based on decision variable quantities
+    '''
     dv: DV
     costs: list
     model: pe.ConcreteModel
     constraints: dict
+    success: SolverResults
     status: str
     termination_condition: str
 
@@ -125,7 +133,8 @@ class Solution:
         # Do multiple stages
         if type(stage) == list:
             if 'ax' in kwargs:
-                raise TypeError("Can't use subplots when passing list of stages. (Can't take 'ax' argument when 'stage' argument is a list)")
+                raise TypeError("Can't use subplots when passing list of stages. " \
+                        "(Can't take 'ax' argument when 'stage' argument is a list)")
             for s in stage:
                 self.plot_stage_quantity(s, sum_inflow, sum_outflow, dynamic_width, figure, legend, **kwargs)
             return

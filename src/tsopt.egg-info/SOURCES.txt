@@ -5,6 +5,7 @@ setup.py
 src/tsopt/__init__.py
 src/tsopt/data.py
 src/tsopt/model.py
+src/tsopt/solution.py
 src/tsopt.egg-info/PKG-INFO
 src/tsopt.egg-info/SOURCES.txt
 src/tsopt.egg-info/dependency_links.txt

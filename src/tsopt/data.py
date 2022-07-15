@@ -2,54 +2,8 @@
 # Last Modified:  Jul 11, 2022
 import pandas as pd
 import numpy as np
-import re
-from typing import List
 
-
-class DV:
-    def __init__(self, layers: list, sizes:list):
-        self.__layers = [layer.capitalize() for layer in layers]
-        self.__abbrevs = ["".join([s[0] for s in re.split("[ -\._]", layer)]).upper() for layer in layers]
-        self.__sizes = sizes
-
-        assert len(set(self.__abbrevs)) == len(self.__abbrevs), \
-                "\nLayer names must start with different letters.\n" \
-                "You can work around this by using multiple words for layer names\n' \
-                'For instance, 'manufacturing center' becomes 'MC')"
-
-        assert [not s[0].isdigit() for s in self.__abbrevs], \
-                f"Layer names must not start with a number."
-
-    @property
-    def layers(self):
-        return self.__layers
-
-    @property
-    def abbrevs(self):
-        return self.__abbrevs
-
-    @property
-    def nodes(self):
-        try:
-            return self.__nodes
-        except AttributeError:
-            if self.__sizes != None:
-                self.__nodes = [
-                        [f'{abbrev}{i+1}' for i in range(0, length)]
-                    for abbrev, length in zip(self.abbrevs, self.sizes)
-                ]
-                return self.__nodes
-
-    @property
-    def sizes(self):
-        return self.__sizes
-
-    @sizes.setter
-    def sizes(self, new):
-        assert len(new) == len(self.__layers), 'Must provide a size for each layer'
-        del self.__nodes
-        self.__sizes = new
-
+from tsopt.dv import DV
 
 
 class SourceData:
@@ -75,6 +29,7 @@ class SourceData:
         # Process user data into dataframes, handling unknown table formatting
         self.cost = self.process_cost_data(cost, layers)
 
+        # Determine number of nodes in each layer based on cost table dimensions
         sizes = [df.shape[0] for df in self.cost] + [self.cost[-1].shape[1]]
         self.dv = DV(layers, sizes)
 
@@ -87,7 +42,7 @@ class SourceData:
         self.capacity = self.process_capacity_data(capacity)
         self.demand = self.process_demand_data(demand)
 
-        self.validate_capacity_demand()
+        self.validate_constraints()
 
 
     def sheet_format(self, df) -> list:
@@ -130,8 +85,8 @@ class SourceData:
 
     def read_file(self, table:str, idx=None, hdr=None) -> pd.DataFrame:
         """
-        Param 'table' will be a filename if reading from csv,
-        or a sheet name if reading from excel
+        Param 'table' will be a filename if reading from csv or its own excel file,
+        or a sheet name if reading from excel file declared upon object creation
         """
         if table.endswith('.csv'):
             return pd.read_csv(table, index_col=idx, header=hdr)
@@ -158,6 +113,9 @@ class SourceData:
 
         # Now read the file again, passing index and header locations
         df = self.read_file(table, idx=indexes, hdr=headers)
+
+        # Finally, remove empty columns and rows caused by the user
+        # accidentally putting spaces in surrounding cells in excel file
         df = df.replace(' ', np.NaN)
         df = df.dropna(axis=1, how='all')
         df = df.dropna(axis=0, how='all')
@@ -240,16 +198,19 @@ class SourceData:
         return final
 
 
-    def validate_capacity_demand(self) -> bool:
-        # Any total layer capacity must be greater than
-        # or equal to all demand that follows
+    def validate_constraints(self) -> bool:
+        '''
+        Make sure that every layer with a capacity constraint has a
+        total capacity (all nodes) greater than or equal to the total
+        demand required by any following layer's demand constraint
+        '''
         for i, cap in self.capacity.items():
             later_demands = {k: v for k, v in self.demand.items() if k > i}
             for j, dem in later_demands.items():
                 assert dem.iloc[:, 0].sum() <= cap.iloc[:, 0].sum(), \
                         f'{self.dv.layers[i]} capacity is less than {self.dv.layers[j]} demand. ' \
                         f'Total capacity at a layer must be greater than or equal to total demand ' \
-                        f'at all following layers. 
+                        f'at all following layers.'
 
 
 

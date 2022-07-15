@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: tsopt
-Version: 0.0.2
+Version: 0.0.3
 Summary: Easily solve any multi-stage transshipment cost minimization optimization problem
 Home-page: https://github.com/ryayoung/tsopt
 Author: Ryan Young
