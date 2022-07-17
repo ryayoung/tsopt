@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Jul 11, 2022
+# Last Modified:  Jul 16, 2022
 
 import pandas as pd
 import numpy as np
@@ -22,7 +22,7 @@ class Solution:
     dynamically create charts based on decision variable quantities
     '''
     dv: DV
-    costs: list
+    cost: list
     model: pe.ConcreteModel
     constraints: dict
     success: SolverResults
@@ -43,16 +43,15 @@ class Solution:
     def quantities(self):
         return [pd.DataFrame(columns=df.columns, index=df.index,
                 data=[[getattr(self.model, inp)[outp].value for outp in df.columns] for inp in df.index])
-            for df in self.costs
+            for df in self.cost
         ]
 
 
     def display(self):
-        print("OBJECTIVE VALUE")
-        print(f"Minimized Cost: ${self.obj_val}\n")
-        print("DECISION VARIABLE QUANTITIES")
+        print(f"MIN. COST: ${round(self.obj_val, 2):,}\n")
+        print("FLOW QUANTITIES")
         for i, df in enumerate(self.quantities):
-            print(f'STAGE {i}: {self.dv.layers[i]} -> {self.dv.layers[i+1]}')
+            print(f'{self.dv.layers[i]} -> {self.dv.layers[i+1]}')
             display(self.quantities[i].copy().astype(np.int64))
 
 
@@ -91,8 +90,8 @@ class Solution:
         '''
         Summarizes stage quantities
         '''
-        df = self.quantities[stage-1]
-        label_pref = (self.dv.abbrevs[stage-1], self.dv.abbrevs[stage])
+        df = self.quantities[stage]
+        label_pref = (self.dv.abbrevs[stage], self.dv.abbrevs[stage+1])
 
         if sum_outflow:
             df = df.sum(axis=1).to_frame().rename(columns={0:label_pref[1]})
@@ -101,7 +100,7 @@ class Solution:
 
         df = pd.melt(df).rename(columns={'variable':'outflow_nodes', 'value':'units'})
         df['Route'] = self.label_edges(
-                sum_inflow, sum_outflow, self.dv.nodes[stage-1], df.outflow_nodes, label_pref[0])
+                sum_inflow, sum_outflow, self.dv.nodes[stage], df.outflow_nodes, label_pref[0])
         return df
 
 
@@ -111,10 +110,10 @@ class Solution:
         Only has effect when number of rows is less than 3
         '''
         w, h = size
+        if rows < 4:
+            w = w // 1.5 + 1
         if rows < 3:
-            w = w // 1.5
-        if rows < 2:
-            w = w // 2
+            w = w // 2 + 1
         return (w, h)
 
 
@@ -128,7 +127,7 @@ class Solution:
             ):
         # By default, do all stages
         if stage == None:
-            stage = [i for i in range(1, len(self.quantities)+1)]
+            stage = [i for i in range(0, len(self.quantities))]
 
         # Do multiple stages
         if type(stage) == list:
@@ -141,7 +140,7 @@ class Solution:
 
         # Defaults based on stage
         if legend == dict():
-            legend = dict(title=self.dv.layers[stage], loc='upper right')
+            legend = dict(title=self.dv.layers[stage+1], loc='upper right')
         if figure == dict():
             figure = dict(figsize=(12,5))
 
@@ -159,8 +158,10 @@ class Solution:
             else:
                 optional['color'] = '#1f77b4'
 
+        title_inflow = self.dv.layers[stage] if not sum_inflow else f'SUM({self.dv.layers[stage]})'
+        title_outflow = self.dv.layers[stage+1] if not sum_outflow else f'SUM({self.dv.layers[stage+1]})'
         result = sns.barplot(x='Route', y='units', data=df, dodge=False, **kwargs, **optional) \
-            .set(xlabel=None, title=f'Quantity: {self.dv.layers[stage-1]} -> {self.dv.layers[stage]}')
+            .set(xlabel=None, title=f'Quantity: {title_inflow} -> {title_outflow}')
 
         if sum_inflow == False and sum_outflow == False and legend != None:
             if 'ax' in kwargs:
@@ -169,3 +170,11 @@ class Solution:
                 plt.legend(**legend)
 
         return result
+
+
+    def plural(self, word:str) -> str:
+        if word.endswith('y'):
+            return word[:-1] + 'ies'
+        if word.endswith('s'):
+            return word + 'es'
+        return word + 's'

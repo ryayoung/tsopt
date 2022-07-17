@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Jul 11, 2022
+# Last Modified:  Jul 16, 2022
 import pandas as pd
 import numpy as np
 import pyomo.environ as pe
@@ -32,7 +32,6 @@ class Model(SourceData):
     def constraints(self):
         return {str(c): c for c in self.mod.component_objects(pe.Constraint)}
 
-
     def new_model(self) -> pe.ConcreteModel:
         return pe.ConcreteModel()
 
@@ -60,6 +59,110 @@ class Model(SourceData):
         return getattr(self.mod, name)
 
 
+    def add_edge_constraint(self, stage, loc:tuple or list, sign:str, value) -> list:
+        '''
+        Constrain a single edge between two nodes.
+        '''
+        assert 0 <= stage <= len(self.cost)-1, f'Invalid stage, {stage}, for edge constraint {loc}'
+        assert len(loc) == 2, 'edge constraint loc argument needs two elements: input and output'
+        if type(loc) == tuple:
+            loc = list(loc)
+
+        for i, item in enumerate(loc):
+            if type(item) != list:
+                loc[i] = [item]
+
+        assert sign in ['<=', '>='], 'Must use <= or >= sign in custom edge constraints'
+
+        inputs, outputs = self.validate_edge_constraint(stage, loc, sign, value)
+        constraints = []
+
+        for inp in inputs:
+            for out in outputs:
+                if sign == '<=':
+                    expr = getattr(self.mod, inp)[out] <= value
+                    name = f'edge_max_{value}_{inp}_{out}'
+                elif sign == '>=':
+                    expr = getattr(self.mod, inp)[out] >= value
+                    name = f'edge_min_{value}_{inp}_{out}'
+                if not hasattr(self.mod, name):
+                    constraints.append(self.add_constraint(name, expr))
+
+        return constraints
+
+
+    def validate_edge_constraint(self, stage, loc, sign, value) -> (list, list):
+        # STEP 1: make sure the keys are valid and convert them to strings if needed
+        for i in range(0, len(loc)):
+            if loc[i] == [None]:
+                loc[i] = self.dv.nodes[stage+i]
+            else:
+                for node_idx, node in enumerate(loc[i]):
+                    if type(node) == int:
+                        assert 0 <= node <= len(self.dv.nodes[i+stage])-1, f'Node {node} not found in layer {i+stage}'
+                        loc[i][node_idx] = self.dv.nodes[i+stage][node]
+                    if type(node) == str:
+                        assert node in self.dv.nodes[i+stage], f'Node {node} not found in layer {self.dv.layers[i+stage]}'
+
+        inputs, outputs = loc[0], loc[1]
+
+        # STEP 2: Make sure we aren't creating a mathematically impossible model
+        df_all = self.cost[stage].copy()
+        df_all[:] = np.NaN
+        for inp in inputs:
+            for out in outputs:
+                df_all.loc[inp, out] = value
+
+        df_in = df_all.sum(axis=1).to_frame()
+        df_in = df_in[df_in.index.isin(df_all.dropna(axis=0).index)]
+        df_out = df_all.sum().to_frame()
+        df_out = df_out[df_out.index.isin(df_all.dropna(axis=1).columns)]
+        dfs = [df_in, df_out]
+
+        fully_constrained_by = None
+        if len(dfs[0].index) == len(df_all.index) and len(dfs[1].index) == len(df_all.columns):
+            fully_constrained_by = df_all.copy().values.sum()
+
+        if sign == '<=':
+            sign = -1
+        else:
+            sign = 1
+
+        if fully_constrained_by != None:
+            if sign == '<=':
+                assert fully_constrained_by >= self.demand[len(self.cost)].values.sum(), \
+                        'Edge constraint makes it impossible to hit the final demand requirement'
+            elif sign == '>=':
+                assert fully_constrained_by <= self.capacity[0].values.sum(), \
+                        'Edge constraint requires a flow volume that exceeds the initial capacity available'
+
+        for i, df in enumerate(dfs):
+            if not df.empty:
+                for node in df.index:
+                    val = df.loc[node, df.columns[0]]
+                    layr = i+stage
+                    if sign == '>=':
+                        if layr in self.capacity:
+                            assert val <= self.capacity[layr].loc[node, self.capacity[layr].columns[0]], \
+                                    f'Node {node} is constrained at a value greater than its capacity'
+                        if layr in self.max_in:
+                            assert val <= self.max_in[layr].loc[node, self.max_in[layr].columns[0]], \
+                                    f'Node {node} is constrained at a value greater than its max input'
+                        if layr in self.demand:
+                            assert self.capacity[0].values.sum() >= val + self.demand[layr][self.demand[layr].index != node].values.sum(), \
+                                    f'Node {node} is constrained at a value ({val}) high enough that the other {self.dv.layers[layr]} ' \
+                                    f"nodes can't meet their demand requirements without exceeding initial flow capacity"
+                    elif sign == '<=':
+                        if layr in self.demand:
+                            assert val >= self.demand[layr].loc[node, self.demand[layr].columns[0]], \
+                                    f'Node {node} is constrained at a value less than its demand'
+                        if layr in self.min_out:
+                            assert val >= self.min_out[layr].loc[node, self.min_out[layr].columns[0]], \
+                                    f'Node {node} is constrained at a value less than its minimum output'
+
+        return inputs, outputs
+
+
     def set_decision_vars(self):
         '''
         Each edge between each pair of nodes is a decision variable.
@@ -84,6 +187,8 @@ class Model(SourceData):
 
     def set_capacity_constraints(self):
         '''
+        i.e. Maximum node output
+        --
         Make sure each decision variable is <= its capacity.
         Capacity constraints are valid on any layer except the last.
         '''
@@ -91,13 +196,31 @@ class Model(SourceData):
             input_nodes = self.dv.nodes[i]
             output_nodes = self.dv.nodes[i+1]
             for node_in in input_nodes:
-                capacity = coefs.loc[node_in, coefs.columns[0]]
-                expr = capacity >= sum(getattr(self.mod, node_in)[node_out] for node_out in output_nodes)
+                val = coefs.loc[node_in, coefs.columns[0]]
+                expr = val >= sum(getattr(self.mod, node_in)[node_out] for node_out in output_nodes)
                 self.add_constraint(node_in, expr, 'capacity')
+
+
+    def set_min_out_constraints(self):
+        '''
+        i.e. Minimum node output
+        --
+        Make sure each decision variable is outputting >= its minimum.
+        Min. out constraints are valid on any layer except the last.
+        '''
+        for i, coefs in self.min_out.items():
+            input_nodes = self.dv.nodes[i]
+            output_nodes = self.dv.nodes[i+1]
+            for node_in in input_nodes:
+                val = coefs.loc[node_in, coefs.columns[0]]
+                expr = val <= sum(getattr(self.mod, node_in)[node_out] for node_out in output_nodes)
+                self.add_constraint(node_in, expr, 'min_out')
 
 
     def set_demand_constraints(self):
         '''
+        i.e. Minimum node input from prev layer
+        --
         Make sure each decision variable is >= its demand.
         Demand constraints are valid on any layer except the first
         '''
@@ -105,9 +228,25 @@ class Model(SourceData):
             input_nodes = self.dv.nodes[i-1]
             output_nodes = self.dv.nodes[i]
             for node_out in output_nodes:
-                demand = coefs.loc[node_out, coefs.columns[0]]
-                expr = demand <= sum(getattr(self.mod, node_in)[node_out] for node_in in input_nodes)
+                val = coefs.loc[node_out, coefs.columns[0]]
+                expr = val <= sum(getattr(self.mod, node_in)[node_out] for node_in in input_nodes)
                 self.add_constraint(node_out, expr, 'demand')
+
+
+    def set_max_in_constraints(self):
+        '''
+        i.e. Maximum node input from prev layer
+        --
+        Make sure each decision variable is <= its maximum input.
+        Max-in constraints are valid on any layer except the first
+        '''
+        for i, coefs in self.max_in.items():
+            input_nodes = self.dv.nodes[i-1]
+            output_nodes = self.dv.nodes[i]
+            for node_out in output_nodes:
+                val = coefs.loc[node_out, coefs.columns[0]]
+                expr = val >= sum(getattr(self.mod, node_in)[node_out] for node_in in input_nodes)
+                self.add_constraint(node_out, expr, 'max_in')
 
 
     def set_flow_constraints(self):
@@ -135,6 +274,8 @@ class Model(SourceData):
         self.set_objective()
         self.set_capacity_constraints()
         self.set_demand_constraints()
+        self.set_min_out_constraints()
+        self.set_max_in_constraints()
         self.set_flow_constraints()
         return self.mod
 
@@ -158,14 +299,21 @@ class Model(SourceData):
 
 
     def display(self):
+        zipped = zip(self.dv.layers, [len(nodes) for nodes in self.dv.nodes])
+        print(*[f'{length}x {self.plural(layer)}' for layer, length in zipped], sep=' -> ')
+        print()
+        print("-------------- COSTS ---------------")
+        for i, df in enumerate(self.cost):
+            print(f'{self.dv.layers[i]} -> {self.dv.layers[i+1]}')
+            display(df)
+        print("----------- CONSTRAINTS ------------")
         for i, df in self.capacity.items():
-            print(f'Output capacity from {self.dv.layers[i]}')
             display(df)
         for i, df in self.demand.items():
-            print(f'Demand required from {self.dv.layers[i]}')
             display(df)
-        for i, df in enumerate(self.cost):
-            print(f'{self.dv.layers[i]} to {self.dv.layers[i+1]} costs')
+        for i, df in self.min_out.items():
+            display(df)
+        for i, df in self.max_in.items():
             display(df)
 
 
@@ -174,3 +322,10 @@ class Model(SourceData):
             print(f"{self.dv.layers[i]}:\n- ", end="")
             print(*nodes, sep=", ")
 
+
+    def plural(self, word:str) -> str:
+        if word.endswith('y'):
+            return word[:-1] + 'ies'
+        if word.endswith('s'):
+            return word + 'es'
+        return word + 's'

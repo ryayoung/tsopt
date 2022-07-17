@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Jul 11, 2022
+# Last Modified:  Jul 16, 2022
 import pandas as pd
 import numpy as np
 
@@ -16,6 +16,8 @@ class SourceData:
             capacity: str or pd.DataFrame or dict,
             demand: str or pd.DataFrame or dict,
             layers: list,
+            min_output: str or pd.DataFrame or dict = None,
+            max_input: str or pd.DataFrame or dict = None,
             excel_file=None,
         ):
 
@@ -41,8 +43,23 @@ class SourceData:
 
         self.capacity = self.process_capacity_data(capacity)
         self.demand = self.process_demand_data(demand)
+        if min_output != None:
+            self.min_out = self.process_min_out_data(min_output)
+        else:
+            self.min_out = {}
+
+        if max_input != None:
+            self.max_in = self.process_max_in_data(max_input)
+        else:
+            self.max_in = {}
 
         self.validate_constraints()
+
+
+    @property
+    def constraint_data(self):
+        all_dfs = [item for sublist in [self.capacity.values(), self.demand.values(), self.min_out.values(), self.max_in.values()] for item in sublist]
+        return {df.columns[0]: df for df in all_dfs}
 
 
     def sheet_format(self, df) -> list:
@@ -144,19 +161,23 @@ class SourceData:
 
     def process_capacity_data(self, tables:dict or str) -> dict:
         '''
-        Given a dict of capacity tables, keyed by layer number, process
+        Given a dict of capacity tables, keyed by layer number or name, process
         their values into dataframes, validate, and format rows and cols
         '''
         if type(tables) != dict:
             tables = {0: tables}
 
-        assert 0 in tables, 'Must provide a capacity constraint table for first layer'
+        assert (0 in tables or self.dv.layers[0] in [k.capitalize() for k in tables.keys()]), 'Must provide a capacity constraint table for first layer'
 
         final = dict()
         for key, table in tables.items():
+            if type(key) == str:
+                key = key.capitalize()
+                assert key in self.dv.layers, f"Invalid key for capacity, {key}"
+                key = self.dv.layers.index(key)
             assert type(key) == int, 'Must use integer as key in capacity dictionary'
             assert 0 <= key < len(self.cost), \
-                    f"Capacity constraints can only be made for layers 0 through {len(self.cost)-1}"
+                    f'Capacity constraints can only be made for layers {self.dv.layers[0]} through {self.dv.layers[-2]}'
             df = self.process_file(table)
             assert df.shape[1] == 1, f"Capacity table {key} must have only one column"
             assert len(self.dv.nodes[key]) == df.shape[0], \
@@ -172,16 +193,20 @@ class SourceData:
 
     def process_demand_data(self, tables:dict or str) -> dict:
         '''
-        Given a dict of demand tables, keyed by layer number, process
+        Given a dict of demand tables, keyed by layer number or name, process
         their values into dataframes, validate, and format rows and cols
         '''
         if type(tables) != dict:
             tables = {len(self.cost): tables}
 
-        assert len(self.cost) in tables, 'Must provide a demand constraint table for final layer'
+        assert (len(self.cost) in tables or self.dv.layers[-1] in [k.capitalize() for k in tables.keys()]), 'Must provide a demand constraint table for first layer'
 
         final = dict()
         for key, table in tables.items():
+            if type(key) == str:
+                key = key.capitalize()
+                assert key in self.dv.layers, f"Invalid key for demand, {key}"
+                key = self.dv.layers.index(key)
             assert type(key) == int, 'Must use integer as key in demand dictionary'
             assert 0 < key <= len(self.cost), \
                     f"Demand constraints only allowed for layers 1 through {len(self.cost)}"
@@ -198,11 +223,71 @@ class SourceData:
         return final
 
 
+    def process_min_out_data(self, tables:dict or str) -> dict:
+        '''
+        Given a dict of minimum output tables, keyed by layer number or name,
+        process their values into dataframes, validate, and format rows and cols
+        '''
+        if type(tables) != dict:
+            tables = {0: tables}
+
+        final = dict()
+        for key, table in tables.items():
+            if type(key) == str:
+                key = key.capitalize()
+                assert key in self.dv.layers, f'Invalid key for min output, {key}'
+                key = self.dv.layers.index(key)
+            assert type(key) == int, 'Must use integer as key in min output dictionary'
+            assert 0 <= key < len(self.cost), \
+                    f'Min output constraints can only be made for layers {self.dv.layers[0]} through {self.dv.layers[-2]}'
+            df = self.process_file(table)
+            assert df.shape[1] == 1, f'Min output table {key} must have only one column'
+            assert len(self.dv.nodes[key]) == df.shape[0], \
+                    f'Number of rows in min output {key} and costs {key} must match'
+
+            # Set index and cols based on node and layer names
+            df.index = self.dv.nodes[key]
+            df.columns = [f'Min Output: {self.dv.layers[key]}']
+            final[key] = df
+
+        return final
+
+
+    def process_max_in_data(self, tables:dict or str) -> dict:
+        '''
+        Given a dict of maximum input tables, keyed by layer number or name,
+        process their values into dataframes, validate, and format rows and cols
+        '''
+        if type(tables) != dict:
+            tables = {0: tables}
+
+        final = dict()
+        for key, table in tables.items():
+            if type(key) == str:
+                key = key.capitalize()
+                assert key in self.dv.layers, f'Invalid key for max input, {key}'
+                key = self.dv.layers.index(key)
+            assert type(key) == int, 'Must use integer as key in max input dictionary'
+            assert 1 <= key < len(self.cost)-1, \
+                    f'Max input constraints can only be made for layers {self.dv.layers[1]} through {self.dv.layers[-1]}'
+            df = self.process_file(table)
+            assert df.shape[1] == 1, f'Max input table {key} must have only one column'
+            assert len(self.dv.nodes[key]) == df.shape[0], \
+                    f'Number of rows in max input {key} and costs {key} must match'
+
+            # Set index and cols based on node and layer names
+            df.index = self.dv.nodes[key]
+            df.columns = [f'Max Input: {self.dv.layers[key]}']
+            final[key] = df
+
+        return final
+
+
     def validate_constraints(self) -> bool:
         '''
         Make sure that every layer with a capacity constraint has a
         total capacity (all nodes) greater than or equal to the total
-        demand required by any following layer's demand constraint
+        demand required by any later demand constraints
         '''
         for i, cap in self.capacity.items():
             later_demands = {k: v for k, v in self.demand.items() if k > i}
