@@ -1,9 +1,10 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Jul 16, 2022
+# Last Modified:  Jul 20, 2022
 import pandas as pd
 import numpy as np
 
 from tsopt.dv import DV
+from tsopt.exceptions import InfeasibleLayerConstraint
 
 
 class SourceData:
@@ -16,8 +17,6 @@ class SourceData:
             capacity: str or pd.DataFrame or dict,
             demand: str or pd.DataFrame or dict,
             layers: list,
-            min_output: str or pd.DataFrame or dict = None,
-            max_input: str or pd.DataFrame or dict = None,
             excel_file=None,
         ):
 
@@ -43,23 +42,22 @@ class SourceData:
 
         self.capacity = self.process_capacity_data(capacity)
         self.demand = self.process_demand_data(demand)
-        if min_output != None:
-            self.min_out = self.process_min_out_data(min_output)
-        else:
-            self.min_out = {}
 
-        if max_input != None:
-            self.max_in = self.process_max_in_data(max_input)
-        else:
-            self.max_in = {}
+        self.capacity_sums = self.sum_constraint_data(self.capacity)
+        self.demand_sums = self.sum_constraint_data(self.demand)
+
+        self.final_demand_total = self.demand_sums[len(self.cost)]
+        self.initial_capacity_total = self.capacity_sums[0]
+        self.flow_capacity = min(self.capacity_sums.values())
+        self.flow_demand = max(self.demand_sums.values())
 
         self.validate_constraints()
 
 
-    @property
-    def constraint_data(self):
-        all_dfs = [item for sublist in [self.capacity.values(), self.demand.values(), self.min_out.values(), self.max_in.values()] for item in sublist]
-        return {df.columns[0]: df for df in all_dfs}
+    # @property
+    # def constraint_data(self):
+        # all_dfs = [item for sublist in [self.capacity.values(), self.demand.values()] for item in sublist]
+        # return {df.columns[0]: df for df in all_dfs}
 
 
     def sheet_format(self, df) -> list:
@@ -134,10 +132,15 @@ class SourceData:
         # Finally, remove empty columns and rows caused by the user
         # accidentally putting spaces in surrounding cells in excel file
         df = df.replace(' ', np.NaN)
-        df = df.dropna(axis=1, how='all')
-        df = df.dropna(axis=0, how='all')
+        df = self.strip_null_ending_cols_and_rows(df)
         df.index.name = None
         return df
+
+
+    def strip_null_ending_cols_and_rows(self, df) -> pd.DataFrame:
+        col_mask = df.notna().any(0)[::-1].cumsum()[::-1].astype(bool)
+        row_mask = df.notna().any(1)[::-1].cumsum()[::-1].astype(bool)
+        return df.loc[:,col_mask].T.loc[:,row_mask].T
 
 
     def process_cost_data(self, tables:list, layers:list) -> list:
@@ -167,17 +170,11 @@ class SourceData:
         if type(tables) != dict:
             tables = {0: tables}
 
-        assert (0 in tables or self.dv.layers[0] in [k.capitalize() for k in tables.keys()]), 'Must provide a capacity constraint table for first layer'
+        assert (0 in tables or self.dv.layers[0] in [k.capitalize() for k in tables.keys() if type(k) == str]), \
+                'Must provide a capacity constraint table for first layer'
 
-        final = dict()
-        for key, table in tables.items():
-            if type(key) == str:
-                key = key.capitalize()
-                assert key in self.dv.layers, f"Invalid key for capacity, {key}"
-                key = self.dv.layers.index(key)
-            assert type(key) == int, 'Must use integer as key in capacity dictionary'
-            assert 0 <= key < len(self.cost), \
-                    f'Capacity constraints can only be made for layers {self.dv.layers[0]} through {self.dv.layers[-2]}'
+        result = self.standardize_key_format(tables)
+        for key, table in result.items():
             df = self.process_file(table)
             assert df.shape[1] == 1, f"Capacity table {key} must have only one column"
             assert len(self.dv.nodes[key]) == df.shape[0], \
@@ -185,10 +182,11 @@ class SourceData:
 
             # Set index and cols based on node and layer names
             df.index = self.dv.nodes[key]
-            df.columns = [f'Capacity: {self.dv.layers[key]}']
-            final[key] = df
+            df = df[0].astype('float')
+            df.name = f'Capacity: {self.dv.layers[key]}'
+            result[key] = df
 
-        return final
+        return result
 
 
     def process_demand_data(self, tables:dict or str) -> dict:
@@ -199,17 +197,11 @@ class SourceData:
         if type(tables) != dict:
             tables = {len(self.cost): tables}
 
-        assert (len(self.cost) in tables or self.dv.layers[-1] in [k.capitalize() for k in tables.keys()]), 'Must provide a demand constraint table for first layer'
+        assert (len(self.cost) in tables or self.dv.layers[-1] in [k.capitalize() for k in tables.keys() if type(k) == str]), \
+                'Must provide a demand constraint table for first layer'
 
-        final = dict()
-        for key, table in tables.items():
-            if type(key) == str:
-                key = key.capitalize()
-                assert key in self.dv.layers, f"Invalid key for demand, {key}"
-                key = self.dv.layers.index(key)
-            assert type(key) == int, 'Must use integer as key in demand dictionary'
-            assert 0 < key <= len(self.cost), \
-                    f"Demand constraints only allowed for layers 1 through {len(self.cost)}"
+        result = self.standardize_key_format(tables)
+        for key, table in result.items():
             df = self.process_file(table)
             assert df.shape[1] == 1, f"Demand table {key} must have only one column"
             assert len(self.dv.nodes[key]) == df.shape[0], \
@@ -217,87 +209,95 @@ class SourceData:
 
             # Set index and cols based on node and layer names
             df.index = self.dv.nodes[key]
-            df.columns = [f'Demand: {self.dv.layers[key]}']
-            final[key] = df
+            df = df[0].astype('float')
+            df.name = f'Demand: {self.dv.layers[key]}'
+            result[key] = df
 
-        return final
+        return result
 
 
-    def process_min_out_data(self, tables:dict or str) -> dict:
-        '''
-        Given a dict of minimum output tables, keyed by layer number or name,
-        process their values into dataframes, validate, and format rows and cols
-        '''
-        if type(tables) != dict:
-            tables = {0: tables}
-
-        final = dict()
-        for key, table in tables.items():
+    def standardize_key_format(self, vals:dict) -> dict:
+        result = dict()
+        for key, val in vals.items():
             if type(key) == str:
                 key = key.capitalize()
-                assert key in self.dv.layers, f'Invalid key for min output, {key}'
-                key = self.dv.layers.index(key)
-            assert type(key) == int, 'Must use integer as key in min output dictionary'
-            assert 0 <= key < len(self.cost), \
-                    f'Min output constraints can only be made for layers {self.dv.layers[0]} through {self.dv.layers[-2]}'
-            df = self.process_file(table)
-            assert df.shape[1] == 1, f'Min output table {key} must have only one column'
-            assert len(self.dv.nodes[key]) == df.shape[0], \
-                    f'Number of rows in min output {key} and costs {key} must match'
+                assert key in self.dv.layers, f"Key, '{key}' is not a valid layer"
+                result[self.dv.layers.index(key)] = val
+            elif type(key) == int:
+                assert 0 <= key <= len(self.dv.layers)-1, f"Key, '{key}' must represent a valid layer"
+                result[key] = val
+            else:
+                raise AssertionError(f"Invalid key, '{key}'. Must use int index of layer, or name of layer")
 
-            # Set index and cols based on node and layer names
-            df.index = self.dv.nodes[key]
-            df.columns = [f'Min Output: {self.dv.layers[key]}']
-            final[key] = df
-
-        return final
+        assert len(vals.keys()) == len(result.keys()), 'Multiple of the same type of constraint on one layer'
+        return result
 
 
-    def process_max_in_data(self, tables:dict or str) -> dict:
-        '''
-        Given a dict of maximum input tables, keyed by layer number or name,
-        process their values into dataframes, validate, and format rows and cols
-        '''
-        if type(tables) != dict:
-            tables = {0: tables}
-
-        final = dict()
-        for key, table in tables.items():
-            if type(key) == str:
-                key = key.capitalize()
-                assert key in self.dv.layers, f'Invalid key for max input, {key}'
-                key = self.dv.layers.index(key)
-            assert type(key) == int, 'Must use integer as key in max input dictionary'
-            assert 1 <= key < len(self.cost)-1, \
-                    f'Max input constraints can only be made for layers {self.dv.layers[1]} through {self.dv.layers[-1]}'
-            df = self.process_file(table)
-            assert df.shape[1] == 1, f'Max input table {key} must have only one column'
-            assert len(self.dv.nodes[key]) == df.shape[0], \
-                    f'Number of rows in max input {key} and costs {key} must match'
-
-            # Set index and cols based on node and layer names
-            df.index = self.dv.nodes[key]
-            df.columns = [f'Max Input: {self.dv.layers[key]}']
-            final[key] = df
-
-        return final
+    def sum_constraint_data(self, tables:dict) -> dict:
+        result = dict()
+        for key, df in tables.items():
+            result[key] = df.values.sum()
+        return result
 
 
     def validate_constraints(self) -> bool:
         '''
-        Make sure that every layer with a capacity constraint has a
-        total capacity (all nodes) greater than or equal to the total
-        demand required by any later demand constraints
+        Ensures constraints don't conflict with each other
         '''
-        for i, cap in self.capacity.items():
-            later_demands = {k: v for k, v in self.demand.items() if k > i}
-            for j, dem in later_demands.items():
-                assert dem.iloc[:, 0].sum() <= cap.iloc[:, 0].sum(), \
-                        f'{self.dv.layers[i]} capacity is less than {self.dv.layers[j]} demand. ' \
-                        f'Total capacity at a layer must be greater than or equal to total demand ' \
-                        f'at all following layers.'
+        # PART 1: Find the capacity constraint with the lowest total capacity, and
+        # make sure this total is >= the demand constraint with the maximum total demand
+        if self.flow_capacity < self.flow_demand:
+            min_cap_layr = self.dv.layers[
+                [i for i in self.capacity_sums.keys() if self.capacity_sums[i] == self.flow_capacity][0]]
+            max_dem_layr = self.dv.layers[
+                [i for i in self.demand_sums.keys() if self.demand_sums[i] == self.flow_demand][0]]
+            raise InfeasibleLayerConstraint(
+                f'{min_cap_layr} capacity is less than {max_dem_layr} demand requirement'
+            )
+
+        # PART 2: For layers with multiple constraints, each node's demand must be less
+        # than its capacity.
+        constraint_index_intersection = list(self.capacity.keys() & self.demand.keys()) # '&' means intersection
+        for i in constraint_index_intersection:
+            cap = self.capacity[i]
+            dem = self.demand[i]
+            for node in cap.index:
+                assert dem[node] <= cap[node], \
+                        f'Node {node} is constrained to a capacity lower than its demand requirement'
 
 
+
+    def plural(self, word:str) -> str:
+        if word.endswith('y'):
+            return word[:-1] + 'ies'
+        if word.endswith('s'):
+            return word + 'es'
+        return word + 's'
+
+
+    def comma_sep(self, iterable, max_len=5) -> str:
+        if len(iterable) == 1:
+            return str(iterable[0])
+        elif len(iterable) <= max_len:
+            main = iterable[:-1]
+            last = iterable[-1]
+            return ', '.join(main) + f' and {last}'
+        else:
+            return ', '.join(iterable[:max_len]) + f' (+{len(iterable)-max_len} more)'
+
+
+    def range_layer(self, start=0, end=0):
+        return range(start, len(self)+end)
+
+    def range_stage(self, start=0, end=0):
+        return range(start, len(self.cost)+end)
+
+    def range_node(self, idx, start=0, end=0):
+        return range(start, len(self.dv.nodes[idx])+end)
+
+
+    def __len__(self):
+        return len(self.dv.layers)
 
 
 
