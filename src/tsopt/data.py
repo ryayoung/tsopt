@@ -1,7 +1,8 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Jul 20, 2022
+# Last Modified:  Jul 21, 2022
 import pandas as pd
 import numpy as np
+import textwrap
 
 from tsopt.dv import DV
 from tsopt.exceptions import InfeasibleLayerConstraint
@@ -284,6 +285,13 @@ class SourceData:
             return ', '.join(main) + f' and {last}'
         else:
             return ', '.join(iterable[:max_len]) + f' (+{len(iterable)-max_len} more)'
+
+
+    def dedent_wrap(self, s, prefix_mask='InfeasibleEdgeConstraint: ') -> str:
+        s = prefix_mask + ' '.join(s.split())
+        wraps = textwrap.wrap(textwrap.dedent(s.strip()), width=80)
+        wraps[0] = wraps[0].replace(prefix_mask, '')
+        return '\n'.join(wraps)
 
 
     def range_layer(self, start=0, end=0):

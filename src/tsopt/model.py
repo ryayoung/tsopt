@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Jul 20, 2022
+# Last Modified:  Jul 21, 2022
 import pandas as pd
 import numpy as np
 import pyomo.environ as pe
@@ -356,7 +356,7 @@ class Model(SourceData):
 
     def validate_max_edge_constraint(self, edges:pd.DataFrame, stage:int) -> None:
         node_bounds = [ self.layer_bounds(stage), self.layer_bounds(stage+1)]
-        layers = tuple(self.dv.layers[stage:stage+2])
+        layers = tuple([s.lower() for s in self.dv.layers[stage:stage+2]])
 
         def sum_less_than_demand() -> None:
             ''' Unlike sum_exceeds_flow_capacity in min edge constraints, we only
@@ -399,32 +399,89 @@ class Model(SourceData):
             ---
             A non-obvious consequence of edge upper bounds is overflow. It's non-obvious
             because the constraints that ultimately determine the flow's feasibility
-            exist in the layer opposite to that in which the re-directed flow is caused.
+            exist in the layer opposite to that in which the redirection of flow is caused.
             When the majority of edges under a node are constrained to a relatively
-            low upper bound, the remaining flow needed to satisfy the node's demand the
-            is forced upon the remaining unconstrained edges, increasing their flow.
+            low upper bound, the remaining flow needed to satisfy the node's demand
+            is forced through the remaining unconstrained edges, increasing their flow.
             From the previous validation checks, we already know this change in flow
-            proportions won't conflict with the node or layer in question.
-            However, the edges attempting to carry the extra flow must ALSO satisfy the
-            constraints of the other nodes they're connected to on the opposite layer.
-            If the opposing nodes don't provide enough capacity for these edges to carry
-            the needed flow, then a solution is infeasible.
+            won't conflict with this node or its layer constraints.  However, the edges
+            attempting to carry the extra flow must ALSO satisfy the constraints of the
+            other nodes they're connected to on the opposite layer.  If the opposing
+            nodes don't provide enough capacity for these edges to carry the needed
+            flow, then a solution is infeasible.
             '''
             changes = [ edges.sum(axis=1), edges.sum() ]
             cross_cap = [ node_bounds[1]['max'], node_bounds[0]['max'] ]
             df_flops = [edges, edges.T]
             required = [b['min']-change for b, change in zip(node_bounds, changes)]
-            cross_req = [[{'node': k, 'req': v, 'from': cap[cap.index.isin([c for c in df.columns if pd.isna(df.loc[k,c])])]} for k, v in req.to_dict().items() if df.notna().any(1)[k]] for req, df, cap in zip(required, df_flops, cross_cap)]
-            cross_req = [[i for i in layr if i['from'].sum() < i['req']] for layr in cross_req]
-            if len(cross_req[0]) == 0 and len(cross_req[1]) == 0:
+            cross_req = [ [ {
+                        'node': k,
+                        'req': v,
+                        'from': cap[cap.index.isin([c for c in df.columns if pd.isna(df.loc[k,c])])]
+                        }
+                    for k, v in req.to_dict().items() if df.notna().any(1)[k] ]
+                for req, df, cap in zip(required, df_flops, cross_cap)
+            ]
+            cross_req = [[dict(item, **{'avail': item['from'].sum()}) for item in layr] for layr in cross_req]
+            cross_req_invalid = [[i for i in layr if i['avail'] < i['req']] for layr in cross_req]
+            if any([len(l) > 0 for l in cross_req_invalid]):
+                for meta, layrs in zip(cross_req_invalid, (layers, layers[::-1])):
+                    if len(meta) == 0: continue
+                    first = meta[0]
+                    node, req = first['node'], first['req']
+                    from_nodes, avail = list(first['from'].index), first['avail']
+                    if len(from_nodes) == 1:
+                        raise InfeasibleEdgeConstraint(self.dedent_wrap(f'''
+                            Upper bounds were placed on all but one of {layrs[0]} {node}'s edges
+                            with {self.plural(layrs[1])}. This means {node}'s only unconstrained edge, {layrs[1]}
+                            {from_nodes[0]}, is forced to provide at least {req} units to meet {node}'s
+                            demand. However, {from_nodes[0]} is limited to a capacity of {avail} units,
+                            which is insufficient to meet the required demand.
+                            '''))
+                    raise InfeasibleEdgeConstraint(self.dedent_wrap(f'''
+                        Upper bounds were placed on some of {layrs[0]} {node}'s edges with
+                        {self.plural(layrs[1])}. These constraints may appear valid. However, to
+                        meet {node}'s demand, its remaining unconstrained edges with {self.plural(layrs[1])}
+                        {self.comma_sep(from_nodes)} need to provide at least {req} units. Those
+                        {self.plural(layrs[1])} each have their own capacities that cannot
+                        be exceeded, and unfortunately, the most they can provide together is {avail}
+                        units. Therefore, a solution is infeasible.
+                        '''))
+
+            assignments = [list(set([tuple(node['from'].index) for node in layr])) for layr in cross_req]
+            assignments = [{nodes: {
+                    'sum_req': sum([node['req'] for node in cross_req[i] if tuple(node['from'].index) == nodes]),
+                    'by': tuple([node['node'] for node in cross_req[i] if tuple(node['from'].index) == nodes]),
+                    'avail': [node['avail'] for node in cross_req[i] if tuple(node['from'].index) == nodes][0]
+                    } for nodes in layr }
+                for i, layr in enumerate(assignments)
+            ]
+            assignments_invalid = [{k:v for k,v in layr.items() if v['sum_req'] > v['avail']} for layr in assignments]
+            if all([len(l) == 0 for l in assignments_invalid]):
                 return
-            for req, layrs in zip(cross_req, (layers, layers[::-1])):
-                if len(req) == 0: continue
-                v = req[0]
-                print('NODE: ', v['node'])
-                print('REQUIRED: ', v['req'])
-                print(f'FROM: ', self.comma_sep(list(v['from'].index)))
-                print(f'AVAILABLE: ', v['from'].sum())
+            for conflicts, layrs in zip(assignments_invalid, (layers, layers[::-1])):
+                if len(conflicts) == 0: continue
+                nodes, meta = list(conflicts.items())[0]
+                sum_req, by_nodes, avail = int(meta['sum_req']), meta['by'], int(meta['avail'])
+                if len(nodes) == 1:
+                    node = nodes[0]
+                    raise InfeasibleEdgeConstraint(self.dedent_wrap(f'''
+                        Upper bounds were placed on all but one of {self.plural(layrs[0])} {self.comma_sep(by_nodes)}'s
+                        edges with {self.plural(layrs[1])}. This means that {node}, the only {layrs[1]} to have
+                        unconstrained edges with each of these {self.plural(layrs[0])}, must carry at least {sum_req} units
+                        to satisfy their demands. Unfortunately, {node}'s capacity of {avail} units is insufficient.
+                    '''))
+                raise InfeasibleEdgeConstraint(self.dedent_wrap(f'''
+                    Upper bounds were placed on {self.plural(layrs[0])} {self.comma_sep(by_nodes)}'s edges
+                    with {self.plural(layrs[1])}. The remaining unconstrained edges, which are between those
+                    {self.plural(layrs[0])} and {self.plural(layrs[1])} {self.comma_sep(nodes)}, must
+                    carry at least {sum_req} units of flow to meet the demands of the {len(by_nodes)}
+                    {self.plural(layrs[0])}. Unfortunately, these {len(nodes)} {self.plural(layrs[1])}
+                    can together carry only {avail} units.
+                    '''))
+
+        # def multiple_overflows_exceed_cross_capacities() -> None:
+
 
 
 
