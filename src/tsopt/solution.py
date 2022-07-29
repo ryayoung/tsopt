@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Jul 16, 2022
+# Last Modified:  Jul 28, 2022
 
 import pandas as pd
 import numpy as np
@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from dataclasses import dataclass
 
-from tsopt.data import DV
+from tsopt.data import ModelStructure
 
 
 
@@ -21,7 +21,7 @@ class Solution:
     Provides ability to pretty-print important metrics and
     dynamically create charts based on decision variable quantities
     '''
-    dv: DV
+    dv: ModelStructure
     cost: list
     model: pe.ConcreteModel
     constraints: dict
@@ -30,17 +30,26 @@ class Solution:
     termination_condition: str
 
     @property
+    def feasible(self):
+        if self.termination_condition == 'optimal':
+            return True
+        return False
+
+    @property
     def obj_val(self):
+        if not self.feasible: return
         return self.model.obj.expr()
 
     @property
     def slack(self):
+        if not self.feasible: return
         return {
             str(key): val.slack() for key, val in self.constraints.items()
         }
 
     @property
     def quantities(self):
+        if not self.feasible: return
         return [pd.DataFrame(columns=df.columns, index=df.index,
                 data=[[getattr(self.model, inp)[outp].value for outp in df.columns] for inp in df.index])
             for df in self.cost
@@ -48,6 +57,9 @@ class Solution:
 
 
     def display(self):
+        if not self.feasible:
+            print("Solution is infeasible")
+            return
         print(f"MIN. COST: ${round(self.obj_val, 2):,}\n")
         print("FLOW QUANTITIES")
         for i, df in enumerate(self.quantities):
@@ -56,6 +68,9 @@ class Solution:
 
 
     def show_slack(self):
+        if not self.feasible:
+            print("Solution is infeasible")
+            return
         has_slack = [c for c in self.slack.keys() if self.slack[c] != 0]
         print(f"The following {len(has_slack)} constraints have slack:")
         print(*[f"{c}: {self.slack[c]}" for c in has_slack], sep="\n")
@@ -73,6 +88,7 @@ class Solution:
         Helper function for plot_stage to create a column that
         accurately labels each edge
         '''
+        if not self.feasible: return
         if sum_outflow and sum_inflow:
             route = inflow_abbrev
         elif sum_inflow:
@@ -90,6 +106,7 @@ class Solution:
         '''
         Summarizes stage quantities
         '''
+        if not self.feasible: return
         df = self.quantities[stage]
         label_pref = (self.dv.abbrevs[stage], self.dv.abbrevs[stage+1])
 
@@ -109,6 +126,7 @@ class Solution:
         Changes first element of size tuple based on num of rows.
         Only has effect when number of rows is less than 3
         '''
+        if not self.feasible: return
         w, h = size
         if rows < 4:
             w = w // 1.5 + 1
@@ -125,6 +143,9 @@ class Solution:
             legend=dict(),
             **kwargs
             ):
+        if not self.feasible:
+            print("Solution is infeasible")
+            return
         # By default, do all stages
         if stage == None:
             stage = [i for i in range(0, len(self.quantities))]
