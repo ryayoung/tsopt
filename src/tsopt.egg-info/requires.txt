@@ -1,4 +1,0 @@
-pandas
-pyomo
-matplotlib
-seaborn
