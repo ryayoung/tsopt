@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Jul 29, 2022
+# Last Modified:  Aug 07, 2022
 import pandas as pd
 import numpy as np
 import pyomo.environ as pe
@@ -12,8 +12,6 @@ from tsopt.data import SourceData
 from tsopt.exceptions import InfeasibleConstraint, InfeasibleEdgeConstraint
 from tsopt.solution import Solution
 import tsopt.text_util as txt
-
-
 
 
 

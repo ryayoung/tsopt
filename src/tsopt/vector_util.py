@@ -1,14 +1,11 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Jul 28, 2022
+# Last Modified:  Aug 20, 2022
 
 import pandas as pd
 import numpy as np
 
-def nrows(df) -> int:
-    return df.shape[0]
+import tsopt.pandas_added_methods
 
-def ncols(df) -> int:
-    return df.shape[1]
 
 def valid_dtype(val) -> bool:
     """
@@ -23,41 +20,11 @@ def valid_dtype(val) -> bool:
         return False
 
 
-def isfull(df, idx=None, col=None) -> bool:
-    '''
-    Check if a dataframe or series is full
-    What is 'full'?
-        - No nulls. No infinity.
-    '''
-    def vec_full(s) -> bool:
-        return ~ s.isna().any().any() and ~ np.isinf(s).any().any()
-
-    if type(df) == pd.Series:
-        assert (idx == None and col == None), "Can't check idx or col for series"
-        return vec_full(df)
-
-    if idx == None and col == None:
-        return vec_full(df)
-    if idx != None:
-        return vec_full(df.T[idx])
-    if col != None:
-        return vec_full(df[col])
-
-
-def strip_null_ending_cols_and_rows(df) -> pd.DataFrame:
-    '''
-    Removes null rows from the bottom, and null columns from end (right) of df
-    '''
-    col_mask = df.notna().any(0)[::-1].cumsum()[::-1].astype(bool)
-    row_mask = df.notna().any(1)[::-1].cumsum()[::-1].astype(bool)
-    return df.loc[:,col_mask].T.loc[:,row_mask].T
-
-
 def staged(iterable):
     '''
     Iterate while knowing the next element.
     Example: data = ('a', 'b', 'c'):
-        >>> for first, next in data.staged:
+        >>> for first, next in staged(data):
         >>>     print(first, next)
 
         (output):
@@ -69,5 +36,48 @@ def staged(iterable):
     for nxt in iterator:
         yield (curr, nxt)
         curr = nxt
+
+
+def read_file(name, excel_file) -> pd.DataFrame:
+    loc = dict(index_col=None, header=None)
+    if excel_file:
+        if type(excel_file) == str:
+            excel_file = pd.ExcelFile(excel_file)
+        return pd.read_excel(excel_file, name, **loc)
+    elif name.endswith('xlsx'):
+        return pd.read_excel(name, **loc)
+    elif name.endswith('csv'):
+        return pd.read_csv(name, **loc)
+    else:
+        raise ValueError(f'Invalid filename, {name}')
+
+
+def raw_df_from_file(name, excel_file=None) -> pd.DataFrame:
+    '''
+    Removes all column headers, indexes, and empty cols and rows
+    '''
+    if str(name).endswith('pkl'):
+        return pd.read_pickle(name)
+
+    df = read_file(name, excel_file)
+
+    df = df.replace(' ', np.nan
+        ).replace(r"[a-zA-Z]", np.nan, regex=True
+        ).strip_null_borders(
+        ).reset(
+        ).astype(float)
+
+    return df
+
+
+def raw_sr_from_file(name, excel_file=None) -> pd.Series:
+    df = raw_df_from_file(name, excel_file)
+
+    if df.nrows > 1 and df.ncols > 1:
+        raise ValueError(f'Invalid shape. 1-dimensional vector required.')
+
+    if df.ncols > df.nrows:
+        return df.T[0]
+    return df[0]
 
 

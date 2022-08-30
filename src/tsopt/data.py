@@ -1,6 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Jul 29, 2022
-import attr
+# Last Modified:  Aug 20, 2022
 import pandas as pd
 import numpy as np
 from typing import List, Generator
@@ -29,17 +28,15 @@ class SourceData:
         self.sizes = sizes
         self.excel_file = excel_file
 
-        self.dv = ModelStructure(layers, sizes)
+        coefs = cost if cost else sizes
+        self.dv = ModelStructure(layers, coefs, self.excel_file)
 
-        self.cost = cost
-
-        self.__capacity, self.__demand = dict(), dict()
-        self.capacity = capacity
-        self.demand = demand
-
-        self.cap = Constraints(self.dv, 'Capacity')
-
-        self.validate_constraints()
+        self.__capacity = Capacity(self.dv, self.excel_file)
+        self.__demand = Demand(self.dv, self.excel_file)
+        if capacity:
+            self.capacity = capacity
+        if demand:
+            self.demand = demand
 
 
     @property
@@ -58,32 +55,34 @@ class SourceData:
 
 
     @property
-    def cost(self): return self.__cost
+    def cost(self): return self.dv.cost
 
-    @cost.setter
-    def cost(self, tables):
-        if tables == None:
-            self.__cost = self.dv.templates.edges(fill=1)
-            return
-
+    # @cost.setter
+    # def cost(self, tables):
+        # if not isinstance(tables, list):
+            # tables = [tables]
+        # if len(tables) != len(self.cost):
+            # raise ValueError(f"Must provide {len(self.dv)} cost tables")
+        # for i, table in enumerate(tables):
+            # self.__cost[i] = table
         # Validation
-        if type(tables) != list:
-            tables = [tables]
-        assert len(tables) == len(self.dv.layers)-1, "len(cost) must be 1 less than len(layers)"
-        dfs = [self.process_file(table) for table in tables]
-
-        for (i_curr, i_nxt), (curr, nxt) in staged(enumerate(dfs)):
-            assert ncols(curr) == nrows(nxt), \
-                    f"Number of columns in Stage {i_curr} costs ({ncols(curr)}) ' \
-                    f'and rows in Stage {i_nxt} costs ({nrows(nxt)}) must match"
+        # if type(tables) != list:
+            # tables = [tables]
+        # assert len(tables) == len(self.dv.layers)-1, "len(cost) must be 1 less than len(layers)"
+        # dfs = [self.process_file(table) for table in tables]
+# 
+        # for (i_curr, i_nxt), (curr, nxt) in staged(enumerate(dfs)):
+            # assert ncols(curr) == nrows(nxt), \
+                    # f"Number of columns in Stage {i_curr} costs ({ncols(curr)}) ' \
+                    # f'and rows in Stage {i_nxt} costs ({nrows(nxt)}) must match"
 
         # Update self.dv, and create cost dfs
-        sizes = [nrows(df) for df in dfs] + [ncols(dfs[-1])]
-        self.dv = ModelStructure(self.dv.layers, sizes)
-        for df, (in_nodes, out_nodes) in zip(dfs, staged(self.dv.nodes)):
-            df.index, df.columns = in_nodes, out_nodes
-
-        self.__cost = dfs
+        # sizes = [nrows(df) for df in dfs] + [ncols(dfs[-1])]
+        # self.dv = ModelStructure(self.dv.layers, sizes)
+        # for df, (in_nodes, out_nodes) in zip(dfs, staged(self.dv.nodes)):
+            # df.index, df.columns = in_nodes, out_nodes
+# 
+        # self.__cost = dfs
 
 
     @property
@@ -91,22 +90,17 @@ class SourceData:
 
     @capacity.setter
     def capacity(self, new):
-        if type(new) != dict:
-            new = {0: new}
+        if isinstance(new, dict):
+            self.__capacity.set_from_dict(new)
+            return
 
-        self.__capacity = dict()
-        new = self.standardize_key_format(new)
-        for k, sr in new.items():
-            sr = self.process_file(sr)[0].astype(float)
-            nodes, layr = self.dv.nodes[k], self.dv.layers[k]
-            assert len(nodes) == nrows(sr), f"Capacity {k} must have a row for each {layr}"
-            sr.index, sr.name = nodes, 'Capacity'
-            self.__capacity[k] = sr
+        if isinstance(new, list) or isinstance(new, tuple):
+            assert len(new) == len(self), f"Invalid number of capacity constraints"
+            for i, val in enumerate(new):
+                self.__capacity[i] = val
+            return
 
-        first_layr = self.dv.layers[0]
-        assert 0 in self.__capacity.keys(), f'Capacity constraint required for {first_layr}'
-        assert isfull(self.__capacity[0]), f'Capacity constraint required for ALL nodes in {first_layr}'
-
+        self.__capacity[0] = new
         self.validate_constraints()
 
 
@@ -115,157 +109,24 @@ class SourceData:
 
     @demand.setter
     def demand(self, new):
-        if type(new) != dict:
-            new = {len(self.dv)-1: new}
+        if isinstance(new, dict):
+            self.__demand.set_from_dict(new)
+            return
 
-        self.__demand = dict()
-        new = self.standardize_key_format(new)
-        for k, sr in new.items():
-            sr = self.process_file(sr)[0].astype(float)
-            nodes, layr = self.dv.nodes[k], self.dv.layers[k]
-            assert len(nodes) == nrows(sr), f"Demand {k} must have a row for each {layr}"
-            sr.index, sr.name = nodes, 'Demand'
-            self.__demand[k] = sr
+        if isinstance(new, list) or isinstance(new, tuple):
+            assert len(new) == len(self), f"Invalid number of demand constraints"
+            for i, val in enumerate(new):
+                self.__demand[i] = val
+            return
 
-        last_layr, last_layr_idx = self.dv.layers[-1], len(self.dv)-1
-        assert last_layr_idx in self.__demand.keys(), f'Demand constraint required for {last_layr}'
-        assert isfull(self.__demand[last_layr_idx]), f'Demand constraint required for ALL nodes in {last_layr}'
-
+        self.__demand[-1] = new
         self.validate_constraints()
-
-
-    @property
-    def capacity_sum(self) -> dict:
-        return {k: df.values.sum() for k,df in self.capacity.items() if isfull(df)}
-
-    @property
-    def demand_sum(self) -> dict:
-        return {k: df.values.sum() for k,df in self.demand.items() if isfull(df)}
-
-    @property
-    def flow_capacity(self) -> int:
-        return min(self.capacity_sum.values()) if len(self.capacity_sum) > 0 else None
-
-    @property
-    def flow_demand(self) -> int:
-        return max(self.demand_sum.values()) if len(self.demand_sum) > 0 else None
-
-    @property
-    def flow_capacity_layer(self) -> str:
-        sums = self.capacity_sum
-        if len(sums) > 0:
-            matches = [ self.dv.layers[k] for k in sums.keys() if sums[k] == self.flow_capacity ]
-            return matches[0]
-        return None
-
-    @property
-    def flow_demand_layer(self) -> str:
-        sums = self.demand_sum
-        if len(sums) > 0:
-            matches = [ self.dv.layers[k] for k in sums.keys() if sums[k] == self.flow_demand ]
-            return matches[-1]
-        return None
-
-    @property
-    def flow_capacity_layer_idx(self) -> str:
-        if self.flow_capacity_layer != None:
-            return self.dv.layers.index(self.flow_capacity_layer)
-        return None
-
-    @property
-    def flow_demand_layer_idx(self) -> str:
-        if self.flow_demand_layer != None:
-            return self.dv.layers.index(self.flow_demand_layer)
-        return None
 
 
     def con_bounds(self) -> dict:
         return {k: pd.concat([ self.demand.get(k), self.capacity.get(k) ], axis=1)
             for k in self.dv.range() if k in self.demand or k in self.capacity
         }
-
-
-    def sheet_format(self, df) -> list:
-        """
-        Returns location of headers and index col in dataframe of unknown format
-        1. Headers (None, 0 or 1)
-        2. Indexes (None or 0)
-        --
-        These values can be passed to pd.read_excel() and pd.read_csv() to
-        accurately retrieve a data table from a source with unknown formatting
-        """
-
-        if 1 in df.shape:
-            if df.shape[1] == 1 and not valid_dtype(df.iloc[0,0]):
-                return 0, None
-            if df.shape[0] == 1 and not valid_dtype(df.iloc[0,0]):
-                return None, 0
-
-            return None, None
-
-        if not valid_dtype(df.iloc[1,1]):
-            return (1 if not valid_dtype(df.iloc[2, 0]) else 0), 0
-
-        return [(0 if not valid_dtype(df.iloc[0,1]) else None),
-                (0 if not valid_dtype(df.iloc[1,0]) else None)]
-
-
-    def read_file(self, table:str, idx=None, hdr=None) -> pd.DataFrame:
-        """
-        Param 'table' will be a filename if reading from csv or its own excel file,
-        or a sheet name if reading from excel file declared upon object creation
-        """
-        if table.endswith('.csv'):
-            return pd.read_csv(table, index_col=idx, header=hdr)
-        if table.endswith('.xlsx'):
-            return pd.read_excel(table, index_col=idx, header=hdr)
-        if self.excel_file:
-            return pd.read_excel(self.excel_file, table, index_col=idx, header=hdr)
-
-        raise ValueError(f"Can't read file {table}")
-
-
-    def process_file(self, table: str or pd.DataFrame) -> pd.DataFrame:
-        '''
-        Takes the name of an excel table or csv file,
-        and returns a dataframe formatted properly, except
-        for columns and indexes
-        '''
-        if type(table) == pd.DataFrame:
-            return table
-        if type(table) in [list, tuple]:
-            return pd.DataFrame(table)
-        # Start by reading in the file with headers=None, index_col=None.
-        # This way ALL provided data will be placed INSIDE the dataframe as values
-        df = self.read_file(table)
-
-        # Find the headers and indexes, if any exist
-        headers, indexes = self.sheet_format(df)
-
-        # Now read the file again, passing index and header locations
-        df = self.read_file(table, idx=indexes, hdr=headers)
-
-        # Finally, remove empty columns and rows caused by the user
-        # accidentally putting spaces in surrounding cells in excel file
-        df = df.replace(' ', np.NaN)
-        df = strip_null_ending_cols_and_rows(df)
-        df.index.name = None
-        return df
-
-
-    def standardize_key_format(self, vals:dict) -> dict:
-        result = dict()
-        for key, val in vals.items():
-            if type(key) == str:
-                assert key in self.dv.layers, f"Key, '{key}' is not a valid layer"
-                result[self.dv.layers.index(key)] = val
-            elif type(key) == int:
-                assert 0 <= key <= len(self.dv)-1, f"Key, '{key}' must represent a valid layer"
-                result[key] = val
-            else:
-                raise AssertionError(f"Invalid key, '{key}'. Must use int index of layer, or name of layer")
-
-        return result
 
 
     def validate_constraints(self) -> bool:
@@ -298,11 +159,16 @@ class SourceData:
         return len(self.dv)
 
 
-class VecDict(dict):
+
+class LayerDict(dict):
     '''
     A dictionary containing a series for each layer in a model.
-    - Keys represent layer index. Values must have valid index for that layer.
-    - Keys must be int, and values must be pd.Series'''
+    - Keys stored as integers, representing layer index.
+    - Values must be pd.Series with index matching that layer's nodes.
+    - If dv.layers == ['foo', 'bar', 'blah'], only keys 0, 1, and 2 are valid.
+        - If layer 'bar' has 3 nodes, the index of the series at key 3
+            must be ['B1', 'B2', 'B3']
+    '''
     def __init__(self, dv, *args):
         self.__dv = dv
         dict.__init__(self, *args)
@@ -311,48 +177,9 @@ class VecDict(dict):
     def dv(self):
         return self.__dv
 
-    def __setitem__(self, k, v):
-        if not isinstance(k, int):
-            raise ValueError('Key in constraint dict must be int')
-        if not isinstance(v, pd.Series):
-            raise ValueError('Value in constraint dict must be pd.Series')
-        if not 0 <= k < len(self.dv):
-            raise ValueError(f'Key {k} does not represent a valid layer')
-        if tuple(v.index) != tuple(self.dv.nodes[k]):
-            raise ValueError(f"Constraint series {k} index must match nodes in {self.dv.layers[k]}")
-        dict.__setitem__(self, k, v)
-
-
-
-class Constraints(VecDict):
-    def __init__(self, dv, name:str=None, excel_file=None, *args):
-        self.__excel_file = excel_file
-        self.__name = name if name else ""
-        if len(args) == 0:
-            args = tuple( [ { i: vec.rename(name) for i,vec in enumerate(dv.templates.vectors()) } ] )
-
-        VecDict.__init__(self, dv, *args)
-
-    @property
-    def name(self): return self.__name
-
-    @property
-    def excel_file(self): return self.__excel_file
-
-    @excel_file.setter
-    def excel_file(self, new):
-        if new == None:
-            self.__excel_file = None
-        elif type(new) == str:
-            self.__excel_file = pd.ExcelFile(new)
-        elif type(new) == pd.ExcelFile:
-            self.__excel_file = new
-        else:
-            raise ValueError("Invalid data type for 'excel_file' argument")
-
-
     def locate(self, k):
-        if k == -1: return len(self.dv)-1
+        if k < 0:
+            return len(self)-k
         if k in self: return k
         elif k in self.dv.layers:
             return self.dv.layers.index(k)
@@ -360,46 +187,109 @@ class Constraints(VecDict):
 
 
     def __getitem__(self, k):
-        return VecDict.__getitem__(self, self.locate(k))
-
-
-    def val_to_series(self, v):
-        if type(v) == pd.Series:
-            return v
-        elif type(v) == pd.DataFrame:
-            return v[v.columns[0]]
-        elif type(v) in [list, tuple]:
-            return pd.DataFrame(v)[0]
-        elif type(v) == str:
-            return self.process_file(v)
-        else:
-            raise ValueError(f'Invalid data type for constraint dict value {k}')
-
+        valid_key = self.locate(k)
+        return dict.__getitem__(self, valid_key)
 
     def __setitem__(self, k, v):
         k = self.locate(k)
+        if not 0 <= k < len(self):
+            raise ValueError(f'Key {k} does not represent a valid layer')
+        dict.__setitem__(self, k, v)
 
-        sr = val_to_series(v)
+
+class Constraints(LayerDict):
+    def __init__(self, dv, excel_file, *args):
+        self.excel_file = excel_file
+
+        if len(args) == 0:
+            args = tuple( [ { i: vec for i,vec in enumerate(dv.templates.vectors()) } ] )
+        LayerDict.__init__(self, dv, *args)
+
+
+    @property
+    def min(self):
+        return min(self.sums.values())
+
+    @property
+    def max(self):
+        return max(self.sums.values())
+
+
+    @property
+    def sums(self):
+        sums = {k : v.sum() if isinstance(v, pd.core.generic.NDFrame) else np.nan for k,v in self.items()}
+        return LayerDict(self.dv, sums)
+
+
+    def val_to_series(self, v):
+        if isinstance(v, str):
+            return raw_sr_from_file(v, self.excel_file)
+        if isinstance(v, pd.DataFrame):
+            return v[v.columns[0]]
+        try:
+            test_if_iterable = iter(v)
+            return pd.Series(v)
+        except Exception:
+            raise ValueError(f'Invalid data type for constraint value {k}')
+
+
+    def __setitem__(self, k, v):
+
+        k = self.locate(k)
+
+        sr = self.val_to_series(v)
 
         nodes = self.dv.nodes[k]
-        if len(nodes) != nrows(sr):
-            raise ValueError(f"Capacity {k} must have a row for each node")
-        sr.index, sr.name = nodes, self.name
-
-        VecDict.__setitem__(self, k, sr)
+        if len(nodes) != sr.nrows:
+            raise ValueError(f"{k} must have a row for each node")
+        sr.index = nodes
+        LayerDict.__setitem__(self, k, sr)
 
 
     def set_from_dict(self, data):
-        ...
-
-    def sheet_format(self):
-        ...
-
-    def read_file(self):
-        ...
-
-    def process_file(self):
-        ...
+        for k,v in data.items():
+            self[k] = v
 
 
 
+class Flow:
+    def __init__(self, val, series, index, layer):
+        self.val = val
+        self.series = series
+        self.index = index
+        self.layer = layer
+
+
+class Capacity(Constraints):
+
+    @property
+    def full(self):
+        full = {k:v for k,v in self.items() if v.isfull()}
+        return Capacity(self.dv, self.excel_file, full)
+
+    @property
+    def flow(self):
+        # Return lowest capacity where the entire layer is full
+        val = self.full.min
+        key = [k for k,v in self.full.sums.items() if v == val][0]
+        sr = self[key]
+        layer = self.dv.layers[key]
+        return Flow(val, sr, key, layer)
+
+
+
+class Demand(Constraints):
+
+    @property
+    def full(self):
+        full = {k:v for k,v in self.items() if v.isfull()}
+        return Demand(self.dv, self.excel_file, full)
+
+    @property
+    def flow(self):
+        # Return highest demand even if layer isn't full
+        val = self.max
+        key = [k for k,v in self.sums.items() if v == val][-1]
+        sr = self[key]
+        layer = self.dv.layers[key]
+        return Flow(val, sr, key, layer)
