@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Jul 28, 2022
+# Last Modified:  Aug 30, 2022
 
 import pandas as pd
 import numpy as np
@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from dataclasses import dataclass
 
-from tsopt.data import ModelStructure
+from tsopt.constants import ModelConstants
 
 
 
@@ -21,7 +21,7 @@ class Solution:
     Provides ability to pretty-print important metrics and
     dynamically create charts based on decision variable quantities
     '''
-    dv: ModelStructure
+    dv: ModelConstants
     cost: list
     model: pe.ConcreteModel
     constraints: dict

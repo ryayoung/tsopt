@@ -1,10 +1,10 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Aug 20, 2022
+# Last Modified:  Aug 30, 2022
 import pandas as pd
 import numpy as np
 from typing import List, Generator
 
-from tsopt.dv import ModelStructure
+from tsopt.constants import ModelConstants
 from tsopt.exceptions import InfeasibleLayerConstraint
 from tsopt.text_util import *
 from tsopt.vector_util import *
@@ -29,7 +29,7 @@ class SourceData:
         self.excel_file = excel_file
 
         coefs = cost if cost else sizes
-        self.dv = ModelStructure(layers, coefs, self.excel_file)
+        self.dv = ModelConstants(layers, coefs, self.excel_file)
 
         self.__capacity = Capacity(self.dv, self.excel_file)
         self.__demand = Demand(self.dv, self.excel_file)
@@ -57,33 +57,6 @@ class SourceData:
     @property
     def cost(self): return self.dv.cost
 
-    # @cost.setter
-    # def cost(self, tables):
-        # if not isinstance(tables, list):
-            # tables = [tables]
-        # if len(tables) != len(self.cost):
-            # raise ValueError(f"Must provide {len(self.dv)} cost tables")
-        # for i, table in enumerate(tables):
-            # self.__cost[i] = table
-        # Validation
-        # if type(tables) != list:
-            # tables = [tables]
-        # assert len(tables) == len(self.dv.layers)-1, "len(cost) must be 1 less than len(layers)"
-        # dfs = [self.process_file(table) for table in tables]
-# 
-        # for (i_curr, i_nxt), (curr, nxt) in staged(enumerate(dfs)):
-            # assert ncols(curr) == nrows(nxt), \
-                    # f"Number of columns in Stage {i_curr} costs ({ncols(curr)}) ' \
-                    # f'and rows in Stage {i_nxt} costs ({nrows(nxt)}) must match"
-
-        # Update self.dv, and create cost dfs
-        # sizes = [nrows(df) for df in dfs] + [ncols(dfs[-1])]
-        # self.dv = ModelStructure(self.dv.layers, sizes)
-        # for df, (in_nodes, out_nodes) in zip(dfs, staged(self.dv.nodes)):
-            # df.index, df.columns = in_nodes, out_nodes
-# 
-        # self.__cost = dfs
-
 
     @property
     def capacity(self): return self.__capacity
@@ -101,7 +74,6 @@ class SourceData:
             return
 
         self.__capacity[0] = new
-        self.validate_constraints()
 
 
     @property
@@ -120,39 +92,14 @@ class SourceData:
             return
 
         self.__demand[-1] = new
-        self.validate_constraints()
 
 
-    def con_bounds(self) -> dict:
+
+    @property
+    def constraint_df_bounds(self):
         return {k: pd.concat([ self.demand.get(k), self.capacity.get(k) ], axis=1)
-            for k in self.dv.range() if k in self.demand or k in self.capacity
+            for k in self.dv.range() if k in self.demand.full or k in self.capacity.full
         }
-
-
-    def validate_constraints(self) -> bool:
-        '''
-        Ensures constraints don't conflict with each other
-        '''
-        if not self.flow_demand_layer or not self.flow_capacity_layer:
-            return
-        # PART 1: Find the capacity constraint with the lowest total capacity, and
-        # make sure this total is >= the demand constraint with the maximum total demand
-        if self.flow_capacity < self.flow_demand:
-            raise InfeasibleLayerConstraint(
-                f'{self.flow_capacity_layer} capacity is less than {self.flow_demand_layer} demand requirement'
-            )
-
-        # PART 2: For layers with multiple constraints, each node's demand must be less
-        # than its capacity.
-        constraint_index_intersection = list(self.capacity.keys() & self.demand.keys()) # '&' means intersection
-        for i in constraint_index_intersection:
-            sr = (self.capacity[i] - self.demand[i]).dropna()
-            bad_nodes = tuple(sr[sr == False].index)
-            if len(bad_nodes) > 0:
-                raise InfeasibleLayerConstraint(
-                    f"{plural(self.dv.layers[i])} {comma_sep(bad_nodes)}'s capacity is less than its demand"
-                )
-
 
 
     def __len__(self):
@@ -197,12 +144,13 @@ class LayerDict(dict):
         dict.__setitem__(self, k, v)
 
 
+
 class Constraints(LayerDict):
     def __init__(self, dv, excel_file, *args):
         self.excel_file = excel_file
 
         if len(args) == 0:
-            args = tuple( [ { i: vec for i,vec in enumerate(dv.templates.vectors()) } ] )
+            args = tuple( [ { i: vec for i,vec in enumerate(dv.templates.layers()) } ] )
         LayerDict.__init__(self, dv, *args)
 
 
@@ -214,10 +162,10 @@ class Constraints(LayerDict):
     def max(self):
         return max(self.sums.values())
 
-
     @property
     def sums(self):
-        sums = {k : v.sum() if isinstance(v, pd.core.generic.NDFrame) else np.nan for k,v in self.items()}
+        is_frame = lambda val: isinstance(val, pd.core.generic.NDFrame)
+        sums = {k : v.sum() if is_frame(v) else np.nan for k,v in self.items()}
         return LayerDict(self.dv, sums)
 
 
@@ -236,7 +184,6 @@ class Constraints(LayerDict):
     def __setitem__(self, k, v):
 
         k = self.locate(k)
-
         sr = self.val_to_series(v)
 
         nodes = self.dv.nodes[k]
@@ -293,3 +240,32 @@ class Demand(Constraints):
         sr = self[key]
         layer = self.dv.layers[key]
         return Flow(val, sr, key, layer)
+
+
+
+
+saved = """
+    def validate_constraints(self) -> bool:
+        '''
+        Ensures constraints don't conflict with each other
+        '''
+        if not self.flow_demand_layer or not self.flow_capacity_layer:
+            return
+        # PART 1: Find the capacity constraint with the lowest total capacity, and
+        # make sure this total is >= the demand constraint with the maximum total demand
+        if self.flow_capacity < self.flow_demand:
+            raise InfeasibleLayerConstraint(
+                f'{self.flow_capacity_layer} capacity is less than {self.flow_demand_layer} demand requirement'
+            )
+
+        # PART 2: For layers with multiple constraints, each node's demand must be less
+        # than its capacity.
+        constraint_index_intersection = list(self.capacity.keys() & self.demand.keys()) # '&' means intersection
+        for i in constraint_index_intersection:
+            sr = (self.capacity[i] - self.demand[i]).dropna()
+            bad_nodes = tuple(sr[sr == False].index)
+            if len(bad_nodes) > 0:
+                raise InfeasibleLayerConstraint(
+                    f"{plural(self.dv.layers[i])} {comma_sep(bad_nodes)}'s capacity is less than its demand"
+                )
+"""

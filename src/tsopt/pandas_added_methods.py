@@ -112,6 +112,76 @@ def reset__(df, *args, **kwargs) -> pd.Series or pd.DataFrame:
 
 # ----------------------------------------------------------------------------
 
+def sums(self, full=False) -> pd.Series:
+    ''' ::pd.DataFrame '''
+    T = self.T
+    sums = self.sum()
+    sums_t = T.sum()
+    if full:
+        sums[self.isna().any()] = np.nan
+        sums_t[T.isna().any()] = np.nan
+
+    return pd.concat([sums, sums_t])
+
+def _sums(df, *args, **kwargs) -> pd.Series:
+    ''' ::pd '''
+    return df.sums(*args, **kwargs)
+
+
+def maxs(self, full=False) -> pd.Series:
+    ''' ::pd.DataFrame '''
+    T = self.T
+    maxs = self.max()
+    maxs_t = T.max()
+    if full:
+        maxs[self.isna().any()] = np.nan
+        maxs_t[T.isna().any()] = np.nan
+
+    return pd.concat([maxs, maxs_t])
+
+def _maxs(df, *args, **kwargs) -> pd.Series:
+    ''' ::pd '''
+    return df.maxs(*args, **kwargs)
+
+
+def mins(self, full=False) -> pd.Series:
+    ''' ::pd.DataFrame '''
+    T = self.T
+    mins = self.min()
+    mins_t = T.min()
+    if full:
+        mins[self.isna().any()] = np.nan
+        mins_t[T.isna().any()] = np.nan
+
+    return pd.concat([mins, mins_t])
+
+def _mins(df, *args, **kwargs) -> pd.Series:
+    ''' ::pd '''
+    return df.mins(*args, **kwargs)
+
+
+# ----------------------------------------------------------------------------
+
+def getsum(self, node, full=False) -> float:
+    ''' ::pd.DataFrame '''
+    def find_series(node):
+        if node not in self.columns:
+            if node in self.index:
+                return self.T[node]
+            raise ValueError("Invalid node")
+        return self[node]
+
+    sr = find_series(node)
+
+    if full == True and sr.isna().any() == True:
+        return np.nan
+
+    return sr.sum()
+
+
+
+# ----------------------------------------------------------------------------
+
 def nrows(df) -> int:
     ''' ::pd
     Reader-friendly row count of dataframe
