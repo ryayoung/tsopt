@@ -1,11 +1,11 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Aug 30, 2022
-import pandas as pd
-import numpy as np
+# Last Modified:  Aug 31, 2022
+import pandas as pd, numpy as np
 from typing import List, Generator
 
-from tsopt.constants import ModelConstants
-from tsopt.exceptions import InfeasibleLayerConstraint
+from tsopt.layer_based import *
+from tsopt.constants import *
+from tsopt.exceptions import *
 from tsopt.text_util import *
 from tsopt.vector_util import *
 
@@ -29,10 +29,10 @@ class SourceData:
         self.excel_file = excel_file
 
         coefs = cost if cost else sizes
-        self.dv = ModelConstants(layers, coefs, self.excel_file)
+        self.dv = ModelConstants(layers, coefs, self)
 
-        self.__capacity = Capacity(self.dv, self.excel_file)
-        self.__demand = Demand(self.dv, self.excel_file)
+        self.__capacity = Capacity(self)
+        self.__demand = Demand(self)
         if capacity:
             self.capacity = capacity
         if demand:
@@ -52,10 +52,6 @@ class SourceData:
             self.__excel_file = new
         else:
             raise ValueError("Invalid data type for 'excel_file' argument")
-
-
-    @property
-    def cost(self): return self.dv.cost
 
 
     @property
@@ -105,141 +101,6 @@ class SourceData:
     def __len__(self):
         return len(self.dv)
 
-
-
-class LayerDict(dict):
-    '''
-    A dictionary containing a series for each layer in a model.
-    - Keys stored as integers, representing layer index.
-    - Values must be pd.Series with index matching that layer's nodes.
-    - If dv.layers == ['foo', 'bar', 'blah'], only keys 0, 1, and 2 are valid.
-        - If layer 'bar' has 3 nodes, the index of the series at key 3
-            must be ['B1', 'B2', 'B3']
-    '''
-    def __init__(self, dv, *args):
-        self.__dv = dv
-        dict.__init__(self, *args)
-
-    @property
-    def dv(self):
-        return self.__dv
-
-    def locate(self, k):
-        if k < 0:
-            return len(self)-k
-        if k in self: return k
-        elif k in self.dv.layers:
-            return self.dv.layers.index(k)
-        raise ValueError(f"Key {k} invalid")
-
-
-    def __getitem__(self, k):
-        valid_key = self.locate(k)
-        return dict.__getitem__(self, valid_key)
-
-    def __setitem__(self, k, v):
-        k = self.locate(k)
-        if not 0 <= k < len(self):
-            raise ValueError(f'Key {k} does not represent a valid layer')
-        dict.__setitem__(self, k, v)
-
-
-
-class Constraints(LayerDict):
-    def __init__(self, dv, excel_file, *args):
-        self.excel_file = excel_file
-
-        if len(args) == 0:
-            args = tuple( [ { i: vec for i,vec in enumerate(dv.templates.layers()) } ] )
-        LayerDict.__init__(self, dv, *args)
-
-
-    @property
-    def min(self):
-        return min(self.sums.values())
-
-    @property
-    def max(self):
-        return max(self.sums.values())
-
-    @property
-    def sums(self):
-        is_frame = lambda val: isinstance(val, pd.core.generic.NDFrame)
-        sums = {k : v.sum() if is_frame(v) else np.nan for k,v in self.items()}
-        return LayerDict(self.dv, sums)
-
-
-    def val_to_series(self, v):
-        if isinstance(v, str):
-            return raw_sr_from_file(v, self.excel_file)
-        if isinstance(v, pd.DataFrame):
-            return v[v.columns[0]]
-        try:
-            test_if_iterable = iter(v)
-            return pd.Series(v)
-        except Exception:
-            raise ValueError(f'Invalid data type for constraint value {k}')
-
-
-    def __setitem__(self, k, v):
-
-        k = self.locate(k)
-        sr = self.val_to_series(v)
-
-        nodes = self.dv.nodes[k]
-        if len(nodes) != sr.nrows:
-            raise ValueError(f"{k} must have a row for each node")
-        sr.index = nodes
-        LayerDict.__setitem__(self, k, sr)
-
-
-    def set_from_dict(self, data):
-        for k,v in data.items():
-            self[k] = v
-
-
-
-class Flow:
-    def __init__(self, val, series, index, layer):
-        self.val = val
-        self.series = series
-        self.index = index
-        self.layer = layer
-
-
-class Capacity(Constraints):
-
-    @property
-    def full(self):
-        full = {k:v for k,v in self.items() if v.isfull()}
-        return Capacity(self.dv, self.excel_file, full)
-
-    @property
-    def flow(self):
-        # Return lowest capacity where the entire layer is full
-        val = self.full.min
-        key = [k for k,v in self.full.sums.items() if v == val][0]
-        sr = self[key]
-        layer = self.dv.layers[key]
-        return Flow(val, sr, key, layer)
-
-
-
-class Demand(Constraints):
-
-    @property
-    def full(self):
-        full = {k:v for k,v in self.items() if v.isfull()}
-        return Demand(self.dv, self.excel_file, full)
-
-    @property
-    def flow(self):
-        # Return highest demand even if layer isn't full
-        val = self.max
-        key = [k for k,v in self.sums.items() if v == val][-1]
-        sr = self[key]
-        layer = self.dv.layers[key]
-        return Flow(val, sr, key, layer)
 
 
 

@@ -112,7 +112,7 @@ def reset__(df, *args, **kwargs) -> pd.Series or pd.DataFrame:
 
 # ----------------------------------------------------------------------------
 
-def sums(self, full=False) -> pd.Series:
+def sums(self, full=False, concat=True) -> pd.Series:
     ''' ::pd.DataFrame '''
     T = self.T
     sums = self.sum()
@@ -121,7 +121,11 @@ def sums(self, full=False) -> pd.Series:
         sums[self.isna().any()] = np.nan
         sums_t[T.isna().any()] = np.nan
 
-    return pd.concat([sums, sums_t])
+    if concat:
+        return pd.concat([sums_t, sums])
+
+    return [sums_t, sums]
+
 
 def _sums(df, *args, **kwargs) -> pd.Series:
     ''' ::pd '''
@@ -137,7 +141,7 @@ def maxs(self, full=False) -> pd.Series:
         maxs[self.isna().any()] = np.nan
         maxs_t[T.isna().any()] = np.nan
 
-    return pd.concat([maxs, maxs_t])
+    return pd.concat([maxs_t, maxs])
 
 def _maxs(df, *args, **kwargs) -> pd.Series:
     ''' ::pd '''
@@ -153,7 +157,7 @@ def mins(self, full=False) -> pd.Series:
         mins[self.isna().any()] = np.nan
         mins_t[T.isna().any()] = np.nan
 
-    return pd.concat([mins, mins_t])
+    return pd.concat([mins_t, mins])
 
 def _mins(df, *args, **kwargs) -> pd.Series:
     ''' ::pd '''
@@ -177,7 +181,6 @@ def getsum(self, node, full=False) -> float:
         return np.nan
 
     return sr.sum()
-
 
 
 # ----------------------------------------------------------------------------

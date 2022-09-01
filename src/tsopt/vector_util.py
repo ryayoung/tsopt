@@ -1,10 +1,33 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Aug 20, 2022
+# Last Modified:  Aug 31, 2022
 
 import pandas as pd
 import numpy as np
 
 import tsopt.pandas_added_methods
+
+def is_list_or_tuple(val, inherit_from=True) -> bool:
+
+    if inherit_from:
+        return (isinstance(val, list) or isinstance(val, tuple))
+
+    return (type(val) == list or type(val) == tuple)
+
+
+def is_list_tuple_or_series(val, inherit_from=True) -> bool:
+    if is_list_or_tuple(val, inherit_from):
+        return True
+    if inherit_from:
+        return isinstance(val, pd.Series)
+    return type(val) == pd.Series
+
+
+def is_frame(val) -> bool:
+    return isinstance(val, pd.core.generic.NDFrame)
+
+def nodes_from_stage_dfs(dfs) -> tuple:
+    nodes = [ df.index for df in dfs ] + [ dfs[-1].columns ]
+    return tuple( tuple(group) for group in nodes )
 
 
 def valid_dtype(val) -> bool:

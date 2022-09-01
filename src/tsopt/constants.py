@@ -1,10 +1,11 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Aug 30, 2022
+# Last Modified:  Aug 31, 2022
 import pandas as pd
 import numpy as np
 import re
 from typing import List, Generator
 from tsopt.vector_util import *
+from tsopt.stage_based import *
 
 class ModelConstants:
     '''
@@ -14,7 +15,7 @@ class ModelConstants:
     - Names, abbreviations, and node names for each layer
     - Edge cost data
     '''
-    def __init__(self, layers:list, coefs:list, excel_file=None):
+    def __init__(self, layers:list, coefs:list, mod):
 
         def layers_to_abbrevs(layers) -> tuple:
             split_layer_to_parts = lambda layer: re.split("[ -\._]", layer)
@@ -35,22 +36,21 @@ class ModelConstants:
 
         def node_labels(layer_idx, num_of_nodes) -> tuple:
             abbrev = self.abbrevs[layer_idx]
-            # 1-based
-            return tuple(abbrev + str(n + 1) for n in range(0, num_of_nodes))
+            return tuple(abbrev + str(n + self.node_label_offset()) for n in range(0, num_of_nodes))
 
 
         def coef_data_from_user_input(value) -> pd.DataFrame:
             if isinstance(value, list) or isinstance(value, tuple):
                 df = pd.DataFrame(np.ones(value))
             elif isinstance(value, str):
-                df = raw_df_from_file(value, self.excel_file)
+                df = raw_df_from_file(value, self.mod.excel_file)
             else:
                 df = pd.DataFrame(value)
 
             return df.astype(float)
 
 
-        self.__excel_file = excel_file
+        self.__mod = mod
 
         self.__layers = tuple(layers)
         self.__abbrevs = layers_to_abbrevs(self.layers)
@@ -70,17 +70,16 @@ class ModelConstants:
             df.columns = node_labels(i+1, len(df.columns))
             dfs.append(df)
 
-        nodes = [ df.index for df in dfs ] + [ dfs[-1].columns ]
-        self.__nodes = tuple( tuple(group) for group in nodes )
-        self.__stage_nodes = tuple((inp, out) for inp, out in staged(nodes))
+        self.__nodes = nodes_from_stage_dfs(dfs)
+        self.__stage_nodes = tuple((inp, out) for inp, out in staged(self.nodes))
 
         self.__templates = TemplateCreator(self.nodes)
 
-        self.__cost = Cost(self.nodes, dfs)
+        self.__cost = Costs(dfs)
 
 
     @property
-    def excel_file(self): return self.__excel_file
+    def mod(self): return self.__mod
     @property
     def layers(self): return self.__layers
     @property
@@ -99,6 +98,10 @@ class ModelConstants:
     @property
     def cost(self): return self.__cost
 
+    @staticmethod
+    def node_label_offset():
+        return 0
+
 
     def range(self, idx=None, start=0, end=0):
         if idx == None:
@@ -115,41 +118,6 @@ class ModelConstants:
 
 
 
-class Cost(list):
-    def __init__(self, nodes, *args):
-        self.__nodes = nodes
-        list.__init__(self, *args)
-
-    @property
-    def nodes(self):
-        return self.__nodes
-
-
-    def validate_frame(self, k, df):
-        if not isinstance(df, pd.DataFrame):
-            raise TypeError(f"Cost table {k} must be of type pd.DataFrame")
-        if df.shape != (len(self.nodes[k]), len(self.nodes[k+1])):
-            raise ValueError(f"Invalid shape for cost table {k}")
-        if tuple(df.index) != self.nodes[k]:
-            raise ValueError(f"Invalid index for cost table {k}")
-        if tuple(df.columns) != self.nodes[k+1]:
-            raise ValueError(f"Invalid columns for cost table {k}")
-
-
-    def __getitem__(self, k):
-        df = list.__getitem__(self, k)
-        self.validate_frame(k, df)
-        return df
-
-
-    def __setitem__(self, k, v):
-        if not 0-len(self) <= k <= len(self):
-            raise ValueError(f"Invalid stage, {k}")
-        self.validate_frame(v)
-
-        list.__setitem__(self, k, v)
-
-
 
 class TemplateCreator:
     def __init__(self, nodes):
@@ -161,7 +129,7 @@ class TemplateCreator:
     # formerly edges
     def stages(self, fill=np.nan):
         return [ pd.DataFrame(fill, index=idx, columns=cols)
-            for idx,cols in self.stage_nodes
+            for idx,cols in staged(self.nodes)
         ]
 
     # formerly vectors
@@ -178,3 +146,17 @@ class TemplateCreator:
                 axis=1)
             for nodes in self.nodes
         ]
+
+
+
+temp = '''
+    def validate_frame(self, k, df):
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError(f"Cost table {k} must be of type pd.DataFrame")
+        if df.shape != (len(self.nodes[k]), len(self.nodes[k+1])):
+            raise ValueError(f"Invalid shape for cost table {k}")
+        if tuple(df.index) != self.nodes[k]:
+            raise ValueError(f"Invalid index for cost table {k}")
+        if tuple(df.columns) != self.nodes[k+1]:
+            raise ValueError(f"Invalid columns for cost table {k}")
+'''
