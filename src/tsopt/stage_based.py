@@ -243,20 +243,30 @@ class EdgeConstraintsContainer:
     @property
     def diff(self):
         diffs = [self.capacity[i] - self.demand[i] for i in range(0, len(self))]
-        return EdgeConstraints(diffs)
+        return EdgeConstraints(diffs, self.mod)
 
     @property
     def true_diff(self):
         def stage_diff(i):
             return self.capacity.true[i] - self.demand.true[i]
-            cap = self.capacity.true
-            dem = self.demand.true
-        return EdgeConstraints([stage_diff(i) for i in range(0, len(self))])
+        return EdgeConstraints([stage_diff(i) for i in range(0, len(self))], self.mod)
 
+
+    def get_node_diff(self, new):
+        cap_updates = self.capacity.nodes_by_layer(new).values()
+        dem_updates = self.demand.nodes_by_layer(new).values()
+        diffs = {i: cap - dem for i, (cap,dem) in enumerate(zip(cap_updates, dem_updates))}
+        return Constraints(self.mod, diffs)
+
+
+    # How can we get the diffs by stage conveniently?
     @property
     def node_diff(self):
-        cap_updates = self.capacity.raised_by_layer()
-        dem_updates = self.demand.lowered_by_layer()
+        return self.get_node_diff(True)
+
+    @property
+    def true_node_diff(self):
+        return self.get_node_diff(False)
 
 
 
