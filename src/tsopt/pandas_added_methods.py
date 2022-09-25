@@ -112,6 +112,13 @@ def reset__(df, *args, **kwargs) -> pd.Series or pd.DataFrame:
 
 # ----------------------------------------------------------------------------
 
+# def _repr_html_(self):
+    # ''' ::pd.Series '''
+    # df = pd.DataFrame(self, columns=[self.name if self.name else ""])
+    # return df._repr_html_()
+
+# ----------------------------------------------------------------------------
+
 def sums(self, full=False, concat=True) -> pd.Series:
     ''' ::pd.DataFrame '''
     T = self.T
@@ -319,6 +326,9 @@ def isfull(self, idx=None, col=None) -> bool:
     What is 'full'?
         - No nulls, AND no infinities (np.inf).
     '''
+    if self.empty:
+        return False
+
     if idx and col:
         raise ValueError(f".isfull() can take either param, 'idx' or 'col', but not both")
 
@@ -336,11 +346,30 @@ def isfull_(self) -> bool:
     -
     Alt. impl. for pd.Series
     '''
-    return ~ self.isna().any() and ~ np.isinf(self).any()
+    if self.empty:
+        return False
+    # return ~ self.isna().any() and ~ np.isinf(self).any()
+    return ~ self.isna().any()
 
 def isfull__(df, *args, **kwargs):
     ''' ::pd '''
     return df.isfull(*args, **kwargs)
+
+# ----------------------------------------------------------------------------
+
+def standardize_str(self, col, substring, **kwargs) -> pd.DataFrame:
+    ''' ::pd.DataFrame '''
+    self.loc[self[col].str.contains(substring, **kwargs), col] = substring
+    return self
+
+def standardize_str_(self, substring, **kwargs) -> pd.Series:
+    ''' ::pd.Series '''
+    self.loc[self.str.contains(substring, **kwargs)] = substring
+    return self
+
+def standardize_str__(df, *args, **kwargs):
+    ''' ::pd '''
+    return df.standardize_str(*args, **kwargs)
 
 # ----------------------------------------------------------------------------
 
@@ -420,7 +449,6 @@ def shape__(df, key=None) -> DFShape or SRShape:
     return df.shape
 
 
-# ----------------------------------------------------------------------------
 # ----------------------------------------------------------------------------
 # ----------------------------------------------------------------------------
 _add_all_funcs_to_objects()

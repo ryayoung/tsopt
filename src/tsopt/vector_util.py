@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Aug 31, 2022
+# Last Modified:  Sep 24, 2022
 
 import pandas as pd
 import numpy as np
@@ -59,6 +59,21 @@ def staged(iterable):
     for nxt in iterator:
         yield (curr, nxt)
         curr = nxt
+
+
+def combine_if(sr1, sr2, func) -> pd.Series:
+    '''
+    Combine two series with same index. For each pair of values,
+    if both are null, return null. If one is null, return the other.
+    If both are present, compare them using provided function (min or max usually)
+    '''
+    def pick(a,b):
+        if not np.isnan(a) and not np.isnan(b):
+            return func(a,b)
+        if not np.isnan(a):
+            return a
+        return b
+    return sr1.combine(sr2, pick)
 
 
 def read_file(name, excel_file) -> pd.DataFrame:

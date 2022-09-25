@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Aug 31, 2022
+# Last Modified:  Sep 24, 2022
 import pandas as pd
 import numpy as np
 import re
@@ -15,7 +15,7 @@ class ModelConstants:
     - Names, abbreviations, and node names for each layer
     - Edge cost data
     '''
-    def __init__(self, layers:list, coefs:list, mod):
+    def __init__(self, mod, layers:list, coefs:list):
 
         def layers_to_abbrevs(layers) -> tuple:
             split_layer_to_parts = lambda layer: re.split("[ -\._]", layer)
@@ -50,10 +50,10 @@ class ModelConstants:
             return df.astype(float)
 
 
-        self.__mod = mod
+        self._mod = mod
 
-        self.__layers = tuple(layers)
-        self.__abbrevs = layers_to_abbrevs(self.layers)
+        self._layers = tuple(layers)
+        self._abbrevs = layers_to_abbrevs(self.layers)
 
         validate_layer_names(self.abbrevs)
 
@@ -70,82 +70,98 @@ class ModelConstants:
             df.columns = node_labels(i+1, len(df.columns))
             dfs.append(df)
 
-        self.__nodes = nodes_from_stage_dfs(dfs)
-        self.__stage_nodes = tuple((inp, out) for inp, out in staged(self.nodes))
+        self._cost = EdgeDFs(self.mod, dfs)
+        self._nodes = nodes_from_stage_dfs(dfs)
+        self._stage_nodes = tuple((inp, out) for inp, out in staged(self.nodes))
+        self._stage_edges = tuple( tuple( tuple( (inp, out) for out in outs ) for inp in inps )
+            for inps, outs in self.stage_nodes
+        )
 
-        self.__templates = TemplateCreator(self.nodes)
-
-        self.__cost = Costs(dfs)
-
-
     @property
-    def mod(self): return self.__mod
+    def mod(self): return self._mod
     @property
-    def layers(self): return self.__layers
+    def layers(self): return self._layers
     @property
-    def abbrevs(self): return self.__abbrevs
+    def abbrevs(self): return self._abbrevs
     @property
-    def nodes(self): return self.__nodes
+    def nodes(self): return self._nodes
     @property
-    def stage_nodes(self): return self.__stage_nodes
+    def stage_nodes(self): return self._stage_nodes
     @property
-    def templates(self): return self.__templates
+    def stage_edges(self): return self._stage_edges
+    @property
+    def cost(self): return self._cost
 
     @property
     def sizes(self):
-        return tuple([len(n) for n in self.__nodes])
-
-    @property
-    def cost(self): return self.__cost
+        return tuple([len(n) for n in self._nodes])
 
     @staticmethod
     def node_label_offset():
         return 0
 
 
+    def layer_index(self, val) -> int:
+        ''' from int, layer name, or abbrev '''
+        if isinstance(val, int):
+            return val
+        try:
+            layers = [l.lower() for l in self.layers]
+            return layers.index(val.lower())
+        except Exception:
+            abbrevs = [a.lower() for a in self.abbrevs]
+            return abbrevs.index(val.lower())
+
+
+    def node_str_to_layer_and_node_indexes(self, node) -> (int, int):
+        ''' "B4" -> (1, 4), or "A3" -> (0, 3)'''
+        node = node.lower()
+        abb, node_idx = re.search(r"([a-zA-Z]+)(\d+)", node).groups()
+        node_idx = int(node_idx)
+        layer_idx = self.abbrevs.index(abb.upper())
+
+        if node_idx+1 > len(self.nodes[layer_idx]):
+            raise ValueError(f"Node index doesnt exist, {node}")
+
+        return (layer_idx, node_idx)
+
+
     def range(self, idx=None, start=0, end=0):
         if idx == None:
             return range(start, len(self)+end)
-        return range(start, len(self.__nodes[idx])+end)
+        return range(start, len(self._nodes[idx])+end)
 
 
     def range_stage(self, start=0, end=0):
         return self.range(end=end-1)
 
 
-    def __len__(self):
-        return len(self.__layers)
-
-
-
-
-class TemplateCreator:
-    def __init__(self, nodes):
-        self.__nodes = nodes
-
-    @property
-    def nodes(self): return self.__nodes
-
-    # formerly edges
-    def stages(self, fill=np.nan):
+    def template_stages(self, fill=np.nan):
+        # formerly edges
         return [ pd.DataFrame(fill, index=idx, columns=cols)
             for idx,cols in staged(self.nodes)
         ]
 
-    # formerly vectors
-    def layers(self, fill=np.nan):
-        return [ pd.Series(fill, index=nodes)
+
+    def template_layers(self, fill=np.nan):
+        # formerly vectors
+        return [ ModSR(fill, index=nodes)
             for nodes in self.nodes
         ]
 
-    def layer_bounds(self, fill_min=np.nan, fill_max=np.nan):
+
+    def template_layer_bounds(self, fill_min=np.nan, fill_max=np.nan):
         return [ pd.concat( [
-                    pd.Series(fill_min, index=nodes, name='min'),
-                    pd.Series(fill_max, index=nodes, name='max')
+                    ModSR(fill_min, index=nodes, name='min'),
+                    ModSR(fill_max, index=nodes, name='max')
                 ],
                 axis=1)
             for nodes in self.nodes
         ]
+
+
+    def __len__(self):
+        return len(self._layers)
 
 
 

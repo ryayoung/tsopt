@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Aug 30, 2022
+# Last Modified:  Sep 24, 2022
 
 import pandas as pd
 import numpy as np
@@ -30,26 +30,17 @@ class Solution:
     termination_condition: str
 
     @property
-    def feasible(self):
-        if self.termination_condition == 'optimal':
-            return True
-        return False
-
-    @property
     def obj_val(self):
-        if not self.feasible: return
         return self.model.obj.expr()
 
     @property
     def slack(self):
-        if not self.feasible: return
         return {
             str(key): val.slack() for key, val in self.constraints.items()
         }
 
     @property
     def quantities(self):
-        if not self.feasible: return
         return [pd.DataFrame(columns=df.columns, index=df.index,
                 data=[[getattr(self.model, inp)[outp].value for outp in df.columns] for inp in df.index])
             for df in self.cost
@@ -57,23 +48,17 @@ class Solution:
 
 
     def display(self):
-        if not self.feasible:
-            print("Solution is infeasible")
-            return
         print(f"MIN. COST: ${round(self.obj_val, 2):,}\n")
         print("FLOW QUANTITIES")
         for i, df in enumerate(self.quantities):
             print(f'{self.dv.layers[i]} -> {self.dv.layers[i+1]}')
-            display(self.quantities[i].copy().astype(np.int64))
+            display(self.quantities[i].astype(np.int64))
 
 
-    def show_slack(self):
-        if not self.feasible:
-            print("Solution is infeasible")
-            return
-        has_slack = [c for c in self.slack.keys() if self.slack[c] != 0]
-        print(f"The following {len(has_slack)} constraints have slack:")
-        print(*[f"{c}: {self.slack[c]}" for c in has_slack], sep="\n")
+    # def show_slack(self):
+        # has_slack = [c for c in self.slack.keys() if self.slack[c] != 0]
+        # print(f"The following {len(has_slack)} constraints have slack:")
+        # print(*[f"{c}: {self.slack[c]}" for c in has_slack], sep="\n")
 
 
     # PLOTTING ---------------------------------------------------------------
@@ -88,7 +73,6 @@ class Solution:
         Helper function for plot_stage to create a column that
         accurately labels each edge
         '''
-        if not self.feasible: return
         if sum_outflow and sum_inflow:
             route = inflow_abbrev
         elif sum_inflow:
