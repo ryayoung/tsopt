@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Sep 24, 2022
+# Last Modified:  Sep 26, 2022
 import pandas as pd
 import numpy as np
 import pyomo.environ as pe
@@ -7,7 +7,9 @@ from pyomo.opt import SolverResults
 import matplotlib.pyplot as plt
 import seaborn as sns
 from dataclasses import dataclass
-from tsopt.stage_based import *
+
+from tsopt.edges import *
+from tsopt.nodes import *
 
 
 class SolvedModel:
@@ -34,7 +36,7 @@ class SolvedModel:
         return { str(key): val.slack() for key, val in self.constraint_objects.items() }
     @property
     def quantities(self):
-        return EdgeDFs(self.mod, [ pd.DataFrame(columns=df.columns, index=df.index,
+        return StageEdges(self.mod, [ pd.DataFrame(columns=df.columns, index=df.index,
                 data=[[getattr(self.pe_mod, inp)[outp].value for outp in df.columns] for inp in df.index])
             for df in self.dv.cost
         ])

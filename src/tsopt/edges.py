@@ -1,20 +1,21 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Sep 24, 2022
+# Last Modified:  Sep 26, 2022
 
-from copy import copy, deepcopy
 import pandas as pd, numpy as np
 
-from tsopt.vector_util import *
-from tsopt.basic_types import *
-from tsopt.layer_based import *
-from tsopt.container import *
+from tsopt.types import *
+from tsopt.nodes import *
 
-class EdgeDFs(StageList):
-    dtype = ModDF
+class StageEdges(StageList):
+    dtype = EdgeDF
 
     @property
     def default_template(self):
         return self.mod.dv.template_stages()
+
+    @property
+    def melted(self):
+        return StageEdgesMelted(self.mod, self)
 
 
     def set_element_format(self, idx, df):
@@ -24,24 +25,28 @@ class EdgeDFs(StageList):
         return df.replace(-1, np.nan).astype(float)
 
 
-    def node_iloc_slice(self, idx, node) -> (int, int):
+    def node_iloc_slice(self, idx, loc) -> (int, int):
         # Node can either be string or tuple
         # Returns node location with RELATIVE layer (0 for input, 1 for output)
         df = super().__getitem__(idx)
-        if isinstance(node, str):
-            if node.upper() in df.columns:
-                node = (1, list(df.columns).index(node))
-            elif node.upper() in df.index:
-                node = (0, list(df.index).index(node))
-        else:
-            node = tuple(node)
 
-        layer, idx = node
-        if layer == 1:
-            node_slice = (slice(None,None,None), idx)
-            return node_slice
-        elif layer == 0:
-            return idx
+        def find_node(loc):
+            if isinstance(loc, tuple):
+                return loc
+            node, cols, rows = loc.upper(), list(df.columns), list(df.index)
+            if node in cols:
+                return 1,cols.index(node)
+            elif node in rows:
+                return 0,rows.index(node)
+
+        loc = tuple(find_node(i) for i in loc)
+
+        vals = [slice(None,None,None),slice(None,None,None)]
+        for axis, idx in loc:
+            vals[axis] = idx
+
+        return tuple(vals)
+
 
     def loc_to_df_stage_and_slice(self, loc) -> (pd.DataFrame, tuple):
         '''
@@ -54,13 +59,14 @@ class EdgeDFs(StageList):
         except Exception:
             loc = (loc, None)
 
-        idx, node = loc[0], loc[1]
+        idx, loc = loc[0], loc[1:]
+
         if not 0 - len(self) <= idx <= len(self):
             raise ValueError(f"Invalid stage, {idx}")
 
         df = super().__getitem__(idx)
 
-        node_slice = self.node_iloc_slice(idx, node) if node else None
+        node_slice = self.node_iloc_slice(idx, loc) if loc[0] else None
         return df, idx, node_slice
 
 
@@ -88,23 +94,45 @@ class EdgeDFs(StageList):
         self[loc] = raw_df_from_file(filename, excel)
 
 
-    def _repr_html_(self):
-        return "".join([df._repr_html_() for df in self])
+class StageEdgesMelted(StageList):
+    dtype = EdgeMeltedDF
+    def __init__(self, mod, stage_edges):
+        dfs = [df.reset_index(
+                ).melt(id_vars='index'
+                ).rename(columns={'index':'inp','variable':'out','value':'val'})
+            for df in stage_edges]
+        super().__init__(mod, dfs)
+
+    @property
+    def sr(self):
+        dfs = [df for df in self]
+        for i, df in enumerate(dfs):
+            dfs[i].index = dfs[i].input + dfs[i].output
+            dfs[i] = dfs[i]['val']
+        return dfs
+
+
+class StageEdgeBoundsMelted(StageList):
+    dtype = EdgeMeltedBoundsDF
+    def __init__(self, mod, demand_edges_melted, capacity_edges_melted):
+        dfs = [pd.merge(dem, cap, how='inner', on=['inp', 'out']).rename(columns={'val_x':'dem', 'val_y':'cap'})
+               for dem, cap in zip(demand_edges_melted, capacity_edges_melted)]
+        super().__init__(mod, dfs)
 
 
 
-class EdgeQuantities(EdgeDFs):
+class EdgeQuantities(StageEdges):
     ''' Stores solved-model quantities. '''
 
     @property
     def node(self):
         ''' Easy to calculate since output and input will always be equal for any node. '''
-        srs = [df.sum(axis=1) for df in self] + [self[-1].sum(axis=0)]
+        return [df.sum(axis=1) for df in self] + [self[-1].sum(axis=0)]
 
 
-class EdgeConstraints(EdgeDFs):
+class EdgeConstraints(StageEdges):
 
-    def node(self, func, skipna=True, cast_type=NodeSRs):
+    def node(self, func, skipna=True, cast_type=None):
         '''
         Convert to nodes by layer.
         -   For each layer, decide how to handle nulls. When skipna=True, nulls
@@ -169,9 +197,9 @@ class EdgeCapacity(EdgeConstraints):
         return [lowered(i) for i in self.mod.dv.range_stage()]
 
 
-    def nodes_by_layer(self, new=True) -> NodeSRs:
+    def nodes_by_layer(self, new=True) -> LayerNodes:
         stages = self.nodes_by_stage(new)
-        return EdgeConstraints.nodes_by_layer(self, stages, min)
+        return super().nodes_by_layer(stages, min)
 
 
 
@@ -206,56 +234,9 @@ class EdgeDemand(EdgeConstraints):
         return [raised(i) for i in self.mod.dv.range_stage()]
 
 
-    def nodes_by_layer(self, new=True) -> NodeSRs:
+    def nodes_by_layer(self, new=True) -> LayerNodes:
         stages = self.nodes_by_stage(new)
-        return EdgeConstraints.nodes_by_layer(self, stages, max)
-
-
-
-class EdgeConstraintsContainer(ConstraintsContainer):
-    capacity_type = EdgeCapacity
-    demand_type = EdgeDemand
-
-    @property
-    def diff(self):
-        diffs = [self.capacity[i] - self.demand[i] for i in range(0, len(self))]
-        return EdgeConstraints(self.mod, diffs)
-
-
-    def get_node_diff(self, new):
-        cap_updates = self.capacity.nodes_by_layer(new).values()
-        dem_updates = self.demand.nodes_by_layer(new).values()
-        diffs = [cap - dem for cap,dem in zip(cap_updates, dem_updates)]
-        return NodeConstraints(self.mod, diffs)
-
-    @property
-    def true_diff(self):
-        def stage_diff(i):
-            return self.capacity.true[i] - self.demand.true[i]
-        return EdgeConstraints(self.mod, [stage_diff(i) for i in range(0, len(self.capacity))])
-
-
-    # How can we get the diffs by stage conveniently?
-    @property
-    def node_diff(self):
-        return self.get_node_diff(True)
-
-    @property
-    def true_node_diff(self):
-        return self.get_node_diff(False)
-
-
-
-
-
-    def __len__(self):
-        return len(self.capacity)
-
-
-
-
-
-
+        return super().nodes_by_layer(stages, max)
 
 
 

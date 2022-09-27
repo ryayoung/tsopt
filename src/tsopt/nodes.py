@@ -1,16 +1,15 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Sep 24, 2022
+# Last Modified:  Sep 26, 2022
 
 import pandas as pd, numpy as np
 
-from tsopt.vector_util import *
-from tsopt.basic_types import *
-from tsopt.constants import *
-from tsopt.layer import *
+from tsopt.types import *
+from tsopt.util import *
+from tsopt.values import *
 
 
-class NodeSRs(LayerList):
-    dtype = ModSR
+class LayerNodes(LayerList):
+    dtype = NodeSR
 
     @property
     def layer(self):
@@ -65,11 +64,24 @@ class NodeSRs(LayerList):
         self[loc] = raw_sr_from_file(filename, excel)
 
 
+class LayerNodeBounds(LayerList):
+    dtype = NodeBoundsDF
+    def __init__(self, mod, demand, capacity):
+        dfs = [ pd.concat([dem, cap], axis=1).rename(columns={0: 'dem', 1: 'cap'})
+            for dem, cap in zip(demand, capacity) ]
+        super().__init__(mod, dfs)
+
     def _repr_html_(self):
-        return "".join([sr._repr_html_() for sr in self])
+        dfs = [df for df in self]
+        sr = pd.DataFrame([["",""]], columns=self[0].columns, index=[""])
+        new = [item for sublist in [[df, sr, sr] for df in dfs[:-1]] for item in sublist] + [dfs[-1]]
+        df = pd.concat(new)
+        return df._repr_html_()
+        # return "".join([df._repr_html_() for df in self])
 
 
-class NodeConstraints(NodeSRs):
+
+class NodeConstraints(LayerNodes):
 
     @property
     def flow(self):
@@ -78,8 +90,8 @@ class NodeConstraints(NodeSRs):
 
     @property
     def full(self):
-        full = [ sr if sr.isfull() else ModSR(dtype=float) for sr in self ]
-        return NodeSRs(self.mod, full)
+        full = [ sr if sr.isfull() else NodeSR(dtype=float) for sr in self ]
+        return LayerNodes(self.mod, full)
 
     def stage(self, stg):
         return [self[stg], self[stg+1]]
@@ -90,7 +102,7 @@ class NodeCapacity(NodeConstraints):
     @property
     def layer(self):
         sums = [sr.sum() if sr.isfull() and not sr.empty else np.nan for sr in self]
-        return LayerCapacity(self.mod, sums)
+        return LayerCapacityValues(self.mod, sums)
 
     @property
     def true(self):
@@ -103,44 +115,9 @@ class NodeDemand(NodeConstraints):
     @property
     def layer(self):
         sums = [sr.sum() if not sr.empty else np.nan for sr in self]
-        return LayerDemand(self.mod, sums)
+        return LayerDemandValues(self.mod, sums)
 
     @property
     def true(self):
         fill_val = 0
         return NodeDemand(self.mod, [sr.fillna(fill_val) for sr in self])
-
-
-class NodeConstraintsContainer(ConstraintsContainer):
-    capacity_type = NodeCapacity
-    demand_type = NodeDemand
-
-    @property
-    def layer(self):
-        return LayerValuesContainer(self.mod, self.capacity.layer, self.demand.layer)
-
-    @property
-    def bounds(self):
-        return [
-                pd.concat([dem, cap], axis=1).rename(columns={0: 'demand', 1: 'capacity'})
-            for dem, cap in zip(self.demand, self.capacity)
-        ]
-
-    @property
-    def diff(self):
-        diffs = [self.capacity[i] - self.demand[i] for i in range(0, len(self))]
-        return NodeSRs(self.mod, diffs)
-
-    @property
-    def true_diff(self):
-        diffs = [self.capacity.true[i] - self.demand.true[i] for i in range(0, len(self))]
-        return NodeSRs(self.mod, diffs)
-
-
-    def __len__(self):
-        if len(self.capacity) != len(self.demand):
-            raise ValueError(f"There's an issue. Capacity and demand are different lengths")
-        return len(self.capacity)
-
-
-

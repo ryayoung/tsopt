@@ -1,10 +1,8 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Sep 24, 2022
+# Last Modified:  Sep 26, 2022
 
 import pandas as pd
 import numpy as np
-
-import tsopt.pandas_added_methods
 
 def is_list_or_tuple(val, inherit_from=True) -> bool:
 

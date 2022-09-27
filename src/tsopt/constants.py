@@ -1,11 +1,13 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Sep 24, 2022
+# Last Modified:  Sep 26, 2022
 import pandas as pd
 import numpy as np
 import re
 from typing import List, Generator
-from tsopt.vector_util import *
-from tsopt.stage_based import *
+from tsopt.util import *
+from tsopt.types import *
+from tsopt.edges import *
+from tsopt.nodes import *
 
 class ModelConstants:
     '''
@@ -70,7 +72,7 @@ class ModelConstants:
             df.columns = node_labels(i+1, len(df.columns))
             dfs.append(df)
 
-        self._cost = EdgeDFs(self.mod, dfs)
+        self._cost = StageEdges(self.mod, dfs)
         self._nodes = nodes_from_stage_dfs(dfs)
         self._stage_nodes = tuple((inp, out) for inp, out in staged(self.nodes))
         self._stage_edges = tuple( tuple( tuple( (inp, out) for out in outs ) for inp in inps )
@@ -132,6 +134,10 @@ class ModelConstants:
         return range(start, len(self._nodes[idx])+end)
 
 
+    def range_flow(self):
+        return self.range(start=1, end=-1)
+
+
     def range_stage(self, start=0, end=0):
         return self.range(end=end-1)
 
@@ -145,15 +151,15 @@ class ModelConstants:
 
     def template_layers(self, fill=np.nan):
         # formerly vectors
-        return [ ModSR(fill, index=nodes)
+        return [ NodeSR(fill, index=nodes)
             for nodes in self.nodes
         ]
 
 
     def template_layer_bounds(self, fill_min=np.nan, fill_max=np.nan):
         return [ pd.concat( [
-                    ModSR(fill_min, index=nodes, name='min'),
-                    ModSR(fill_max, index=nodes, name='max')
+                    NodeSR(fill_min, index=nodes, name='min'),
+                    NodeSR(fill_max, index=nodes, name='max')
                 ],
                 axis=1)
             for nodes in self.nodes
@@ -162,17 +168,3 @@ class ModelConstants:
 
     def __len__(self):
         return len(self._layers)
-
-
-
-temp = '''
-    def validate_frame(self, k, df):
-        if not isinstance(df, pd.DataFrame):
-            raise TypeError(f"Cost table {k} must be of type pd.DataFrame")
-        if df.shape != (len(self.nodes[k]), len(self.nodes[k+1])):
-            raise ValueError(f"Invalid shape for cost table {k}")
-        if tuple(df.index) != self.nodes[k]:
-            raise ValueError(f"Invalid index for cost table {k}")
-        if tuple(df.columns) != self.nodes[k+1]:
-            raise ValueError(f"Invalid columns for cost table {k}")
-'''
