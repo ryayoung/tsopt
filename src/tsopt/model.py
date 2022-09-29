@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Sep 26, 2022
+# Last Modified:  Sep 28, 2022
 import pandas as pd
 import numpy as np
 import pyomo.environ as pe
@@ -52,11 +52,10 @@ class Model:
         return getattr(self.pe_mod, var_name)
 
 
-    def add_constraint(self, name, constr, prefix=None, **kwargs):
+    def add_constraint(self, name, constr):
         '''
         Dynamically set pe.Constraint variables on model, given a name
         '''
-        name = f'{prefix}_{name}' if prefix else name
         setattr(self.pe_mod, name, pe.Constraint(expr=constr))
 
 
@@ -91,15 +90,15 @@ class Model:
     def set_node_constraints(self):
         not_null = lambda srs: [sr[sr.notnull()] for sr in srs]
         sum_func = lambda i, node: self.sum_outflows(i,node) if i == 0 else self.sum_inflows(i,node)
-        add = lambda node, type, expr: self.add_constraint(f'{node}_{type}', expr)
+        add = lambda name, expr: self.add_constraint(f'{node}_{type}', expr)
 
         for i, coefs in enumerate(not_null(self.node.capacity)):
             for node in coefs.index:
-                add(node, 'capacity', coefs[node] >= sum_func(i, node))
+                add(f'capacity_{node}', coefs[node] >= sum_func(i, node))
 
         for i, coefs in enumerate(not_null(self.node.demand)):
             for node in coefs.index:
-                add(node, 'demand', coefs[node] <= sum_func(i, node))
+                add(f'demand_{node}', coefs[node] <= sum_func(i, node))
 
 
     def set_flow_constraints(self):
@@ -109,7 +108,7 @@ class Model:
         for flow in self.dv.range_flow():
             for node in self.dv.nodes[flow]:
                 expr = self.sum_inflows(flow, node) == self.sum_outflows(flow, node)
-                self.add_constraint(node, expr, 'flow')
+                self.add_constraint(f'flow_{node}', expr)
 
 
     def set_edge_constraints(self):
@@ -118,12 +117,12 @@ class Model:
 
         for df in not_null(self.edge.demand.melted):
             for i, inp_node, out_node, val in df.itertuples():
-                self.add_constraint(f'edge_demand_{inp_node}_{out_node}',
+                self.add_constraint(f'demand_{inp_node}_{out_node}',
                         val <= edge(inp_node, out_node))
 
         for df in not_null(self.edge.capacity.melted):
             for i, inp_node, out_node, val in df.itertuples():
-                self.add_constraint(f'edge_capacity_{inp_node}_{out_node}',
+                self.add_constraint(f'capacity_{inp_node}_{out_node}',
                         val >= edge(inp_node, out_node))
 
 
