@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Sep 26, 2022
+# Last Modified:  Oct 04, 2022
 
 import pandas as pd, numpy as np
 
@@ -103,8 +103,13 @@ class StageEdgesMelted(StageList):
             for df in stage_edges]
         super().__init__(mod, dfs)
 
+
     @property
-    def sr(self):
+    def notnull(self):
+        return StageList(self.mod, [self.cls_dtype(df[~df.val.isna()]) for df in self])
+
+    @property
+    def series(self):
         dfs = [df for df in self]
         for i, df in enumerate(dfs):
             dfs[i].index = dfs[i].input + dfs[i].output
@@ -131,6 +136,12 @@ class EdgeQuantities(StageEdges):
 
 
 class EdgeConstraints(StageEdges):
+
+    @property
+    def notnull(self):
+        return StageList(self.mod, [EdgeDF(df[~df.val.isna()]) for df in self.melted])
+
+
 
     def node(self, func, skipna=True, cast_type=None):
         '''
@@ -174,7 +185,7 @@ class EdgeCapacity(EdgeConstraints):
     @property
     def true(self):
         # WUT
-        fill_val = self.mod.node.capacity.flow.val
+        fill_val = self.mod.node.cap.flow.val
         new_items = [df.fillna(fill_val) for df in self]
         return EdgeCapacity(self.mod, new_items)
 
@@ -185,7 +196,7 @@ class EdgeCapacity(EdgeConstraints):
 
         def lowered(stage):
             sums1, sums2 = self[stage].sums(full=True, concat=False)
-            cap1, cap2 = self.mod.node.capacity.stage(stage)
+            cap1, cap2 = self.mod.node.cap.stage(stage)
             if new:
                 sums1[sums1 >= cap1] = np.nan
                 sums2[sums2 >= cap2] = np.nan
@@ -222,7 +233,7 @@ class EdgeDemand(EdgeConstraints):
 
         def raised(stage):
             sums1, sums2 = self[stage].sums(concat=False)
-            dem1, dem2 = self.mod.node.demand.stage(stage)
+            dem1, dem2 = self.mod.node.dem.stage(stage)
             if new:
                 sums1[sums1 <= dem1] = np.nan
                 sums2[sums2 <= dem2] = np.nan

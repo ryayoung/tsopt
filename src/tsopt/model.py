@@ -1,12 +1,9 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Sep 28, 2022
+# Last Modified:  Oct 04, 2022
 import pandas as pd
 import numpy as np
-import pyomo.environ as pe
-import matplotlib.pyplot as plt
-import seaborn as sns
+import pulp as pl
 from dataclasses import dataclass
-from copy import deepcopy
 
 from tsopt.constants import *
 from tsopt.types import *
@@ -23,7 +20,6 @@ class Model:
     and you need to minimize cost from plant to distributor and from distributor to warehouse,
     while staying within capacity and meeting demand requirements.
     """
-    solver = pe.SolverFactory('glpk')
 
     def __init__(self,
             layers: list,
@@ -35,127 +31,131 @@ class Model:
         self.excel_file = pd.ExcelFile(excel_file) if isinstance(excel_file, str) else excel_file
 
         self.dv = ModelConstants(self, layers, edge_costs)
-        self.pe_mod = pe.ConcreteModel()
+        self.pl_mod = None
 
         # CONSTRAINTS
-        self.network = NetworkValuesContainer(None, None)
+        self.net = NetworkValuesContainer(None, None)
         self.node = NodesContainer(self)
         self.edge = EdgesContainer(self)
 
 
-    @property
-    def constraint_objects(self):
-        return {str(c): c for c in self.pe_mod.component_objects(pe.Constraint)}
-
-
     def var(self, var_name):
-        return getattr(self.pe_mod, var_name)
+        return getattr(self.pl_mod, var_name)
+
+    def add(self, arg):
+        self.pl_mod += arg
 
 
-    def add_constraint(self, name, constr):
-        '''
-        Dynamically set pe.Constraint variables on model, given a name
-        '''
-        setattr(self.pe_mod, name, pe.Constraint(expr=constr))
-
-
-    def sum_outflows(self, idx, node):
-        '''
-        for node B3, return sum(B3[C1], B3[C2], B3[C3])
-        '''
+    def sum_outflow(self, idx, node):
+        ''' for node B3, return sum(B3[C1], B3[C2], B3[C3]) '''
         output_nodes = self.dv.nodes[idx + 1]
         return sum(self.var(node)[out] for out in output_nodes)
 
 
-    def sum_inflows(self, idx, node):
-        '''
-        for node B3, return sum(A1[B3], A2[B3], A3[B3])
-        '''
+    def sum_inflow(self, idx, node):
+        ''' for node B3, return sum(A1[B3], A2[B3], A3[B3]) '''
         input_nodes = self.dv.nodes[idx - 1]
         return sum(self.var(inp)[node] for inp in input_nodes)
 
 
     def set_network_constraints(self):
-        # Measure the flow in stage 0 since it must be the same in all stages
-        if self.network.empty:
+        '''
+        Flow through each layer of network.
+        - Only one value for the whole network is needed,
+          since each layer will have the same flow
+        '''
+        if self.net.empty:
             return
+        # Measure flow in stage 0 since it must be the same in all stages
+        total_flow = sum( self.sum_outflow(0, node) for node in self.dv.nodes[0] )
 
-        total_flow = sum( self.sum_outflows(0, node) for node in self.dv.nodes[0] )
-
-        nw = self.network
-        if nw.capacity: self.add_constraint('capacity', nw.capacity >= total_flow)
-        if nw.demand: self.add_constraint('demand', nw.demand <= total_flow)
+        if self.net.cap:
+            self.add(total_flow <= self.net.cap)
+        if self.net.dem:
+            self.add(total_flow >= self.net.dem)
 
 
     def set_node_constraints(self):
-        not_null = lambda srs: [sr[sr.notnull()] for sr in srs]
-        sum_func = lambda i, node: self.sum_outflows(i,node) if i == 0 else self.sum_inflows(i,node)
-        add = lambda name, expr: self.add_constraint(f'{node}_{type}', expr)
-
-        for i, coefs in enumerate(not_null(self.node.capacity)):
-            for node in coefs.index:
-                add(f'capacity_{node}', coefs[node] >= sum_func(i, node))
-
-        for i, coefs in enumerate(not_null(self.node.demand)):
-            for node in coefs.index:
-                add(f'demand_{node}', coefs[node] <= sum_func(i, node))
-
-
-    def set_flow_constraints(self):
         '''
-        Equal flow for all stages.
+        User-defined bounds on flow through each node.
+        - This can be defined in one of two ways:
+            1. Sum of node's edges with the next layer (outflow)
+            2. Sum of node's edges with the previous layer (inflow)
+        - It DOESN'T matter which option is used, as long as we don't attempt
+          an inflow sum on layer 0, or outflow sum in layer -1 (impossible).
+        - Inner function, sum_func(), will choose sum_outflow() when
+          constraining nodes in the first layer, and sum_inflow() for
+          all other layers.
         '''
-        for flow in self.dv.range_flow():
-            for node in self.dv.nodes[flow]:
-                expr = self.sum_inflows(flow, node) == self.sum_outflows(flow, node)
-                self.add_constraint(f'flow_{node}', expr)
+        sum_func = lambda i, node: self.sum_outflow(i,node) if i == 0 else self.sum_inflow(i,node)
+
+        for i, coefs in enumerate(self.node.cap.notnull):
+            for node in coefs.index:
+                self.add(sum_func(i, node) <= coefs[node])
+
+        for i, coefs in enumerate(self.node.dem.notnull):
+            for node in coefs.index:
+                self.add(sum_func(i, node) >= coefs[node])
 
 
     def set_edge_constraints(self):
-        not_null = lambda dfs: [df[~df.val.isna()] for df in dfs]
-        edge = lambda inp, out: self.var(inp)[out]
-
-        for df in not_null(self.edge.demand.melted):
+        '''
+        Set bounds on individual edges.
+        - User-defined values are stored in the same
+          format as costs.
+        '''
+        for df in self.edge.dem.melted.notnull:
             for i, inp_node, out_node, val in df.itertuples():
-                self.add_constraint(f'demand_{inp_node}_{out_node}',
-                        val <= edge(inp_node, out_node))
+                self.add(self.var(inp_node)[out_node] >= val)
 
-        for df in not_null(self.edge.capacity.melted):
+        for df in self.edge.cap.melted.notnull:
             for i, inp_node, out_node, val in df.itertuples():
-                self.add_constraint(f'capacity_{inp_node}_{out_node}',
-                        val >= edge(inp_node, out_node))
+                self.add(self.var(inp_node)[out_node] <= val)
 
 
-    def build(self) -> pe.ConcreteModel:
+    def build(self):
+        # NEW MODEL
+        self.pl_mod = pl.LpProblem('Transhipment', pl.LpMinimize)
+
         # DECISION VARS
         for ins, outs in self.dv.stage_nodes:
             for node in ins:
-                setattr(self.pe_mod, node, pe.Var(outs, domain=pe.NonNegativeReals))
+                setattr(self.pl_mod, node, pl.LpVariable.dicts(node, list(outs), lowBound=0, upBound=None, cat='Integer'))
 
         # OBJECTIVE
         total_cost = 0
         for stg, df in enumerate(self.edge.bounds):
             for inp, out in zip(df.inp, df.out):
-                total_cost += self.dv.cost[stg].loc[inp, out] * self.var(inp)[out]
+                total_cost += self.var(inp)[out] * self.dv.cost[stg].loc[inp, out]
+        self.add(total_cost)
 
-        self.pe_mod.obj = pe.Objective(expr = total_cost, sense=pe.minimize)
-
+        # USER-DEFINED CONSTRAINTS
         self.set_network_constraints()
         self.set_node_constraints()
-        self.set_flow_constraints()
         self.set_edge_constraints()
+
+        # FLOW CONSTRAINT
+        '''
+        In models with more than 2 layers, make sure that in middle
+        layers (ones which take inflow and produce outflow), each
+        node's inflow must equal its outflow.
+        '''
+        for flow in self.dv.range_flow():
+            for node in self.dv.nodes[flow]:
+                self.add(self.sum_inflow(flow, node) == self.sum_outflow(flow, node))
 
 
     def solve(self) -> SolvedModel:
-        self.build()
-        success = Model.solver.solve(self.pe_mod)
-        termination_condition = success.solver.termination_condition
-        if termination_condition == 'optimal':
-            return SolvedModel(self, success)
+        status = self.pl_mod.solve(pl.PULP_CBC_CMD(msg=0)) # Solve, silencing messages
+        if pl.LpStatus[status] == 'Optimal':
+            return SolvedModel(self)
         else:
-            print(f'Status: ', status)
-            print(f'Term Condition: ', termination_condition)
-            return success
+            raise ValueError(f'Status: ', pl.LpStatus[status])
+
+
+    def run(self) -> SolvedModel:
+        self.build()
+        return self.solve()
 
 
     def display(self):
@@ -170,7 +170,6 @@ class Model:
         print("---- NODE CONSTRAINTS ----")
         display(self.node)
 
-        print("---- EDGE CONSTRAINTS ----")
         dfs = self.edge.bounds
         for i, df in enumerate(dfs):
             df.index = df.inp + " -> " + df.out
@@ -178,8 +177,9 @@ class Model:
             dfs[i] = dfs[i][(~dfs[i].dem.isna()) | (~dfs[i].cap.isna())]
 
         dfs = [df for df in dfs if df.shape.rows > 0]
-
-        display(*dfs)
+        if len(dfs) > 0:
+            print("---- EDGE CONSTRAINTS ----")
+            display(*dfs)
 
 
     def __len__(self):

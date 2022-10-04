@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Sep 26, 2022
+# Last Modified:  Oct 04, 2022
 from dataclasses import dataclass
 from tsopt.edges import *
 from tsopt.nodes import *
@@ -17,41 +17,41 @@ class Container:
     way, child classes can replace their redundant init methods with simple class
     variable declarations, capacity_type and demand_type.
     '''
-    demand_type = None
-    capacity_type = None
+    dem_type = None
+    cap_type = None
 
     def __init__(self, mod, demand=None, capacity=None):
         self._mod = mod
 
         cls = self.__class__
 
-        if not cls.demand_type:
-            self._demand = demand
+        if not cls.dem_type:
+            self._dem = demand
         elif demand:
-            self._demand = cls.demand_type(mod, demand)
+            self._dem = cls.dem_type(mod, demand)
         else:
-            self._demand = cls.demand_type(mod)
+            self._dem = cls.dem_type(mod)
 
-        if not cls.capacity_type:
-            self._capacity = capacity
+        if not cls.cap_type:
+            self._cap = capacity
         elif capacity:
-            self._capacity = cls.capacity_type(mod, capacity)
+            self._cap = cls.cap_type(mod, capacity)
         else:
-            self._capacity = cls.capacity_type(mod)
+            self._cap = cls.cap_type(mod)
 
     @property
     def mod(self): return self._mod
     @property
-    def demand(self): return self._demand
+    def dem(self): return self._dem
     @property
-    def capacity(self): return self._capacity
+    def cap(self): return self._cap
 
     @property
     def bounds(self):
         pass
 
     def __len__(self):
-        return len(self.capacity)
+        return len(self.cap)
 
     def _repr_html_(self):
         return self.bounds._repr_html_()
@@ -60,85 +60,85 @@ class Container:
 
 @dataclass
 class NetworkValuesContainer:
-    demand: float
-    capacity: float
+    dem: float
+    cap: float
 
     @property
     def empty(self):
-        return self.demand == None and self.capacity == None
+        return self.dem == None and self.cap == None
 
 
 
 class LayerValuesContainer(Container):
-    demand_type = LayerDemandValues
-    capacity_type = LayerCapacityValues
+    dem_type = LayerDemandValues
+    cap_type = LayerCapacityValues
 
     @property
     def bounds(self):
-        return pd.DataFrame(zip(self.demand, self.capacity),
+        return pd.DataFrame(zip(self.dem, self.cap),
                     index=self.mod.dv.abbrevs, columns=['dem','cap'])
 
     @property
     def diff(self):
-        diffs = [self.capacity[i] - self.demand[i] for i in range(0, len(self))]
+        diffs = [self.cap[i] - self.dem[i] for i in range(0, len(self))]
         return LayerValues(self.mod, diffs)
 
 
 
 class NodesContainer(Container):
-    demand_type = NodeDemand
-    capacity_type = NodeCapacity
+    dem_type = NodeDemand
+    cap_type = NodeCapacity
 
     @property
     def layer(self):
-        return LayerValuesContainer(self.mod, self.demand.layer, self.capacity.layer)
+        return LayerValuesContainer(self.mod, self.dem.layer, self.cap.layer)
 
     @property
     def bounds(self):
-        return LayerNodeBounds(self.mod, self.demand, self.capacity)
+        return LayerNodeBounds(self.mod, self.dem, self.cap)
 
 
     @property
     def diff(self):
-        diffs = [self.capacity[i] - self.demand[i] for i in range(0, len(self))]
+        diffs = [self.cap[i] - self.dem[i] for i in range(0, len(self))]
         return LayerNodes(self.mod, diffs)
 
     @property
     def true_diff(self):
-        diffs = [self.capacity.true[i] - self.demand.true[i] for i in range(0, len(self))]
+        diffs = [self.cap.true[i] - self.dem.true[i] for i in range(0, len(self))]
         return LayerNodes(self.mod, diffs)
 
 
 
 class EdgesContainer(Container):
-    demand_type = EdgeDemand
-    capacity_type = EdgeCapacity
+    dem_type = EdgeDemand
+    cap_type = EdgeCapacity
 
     @property
     def diff(self):
-        diffs = [self.capacity[i] - self.demand[i] for i in range(0, len(self))]
+        diffs = [self.cap[i] - self.dem[i] for i in range(0, len(self))]
         return EdgeConstraints(self.mod, diffs)
 
     @property
     def node(self):
-        return NodesContainer(self.mod, self.demand.node, self.capacity.node)
+        return NodesContainer(self.mod, self.dem.node, self.cap.node)
 
     @property
     def bounds(self):
         ''' Returns MELTED bounds. Index: input. Cols: [output, demand, capacity]'''
-        return StageEdgeBoundsMelted(self.mod, self.demand.melted, self.capacity.melted)
+        return StageEdgeBoundsMelted(self.mod, self.dem.melted, self.cap.melted)
 
     def get_node_diff(self, new):
-        cap_updates = self.capacity.nodes_by_layer(new).values()
-        dem_updates = self.demand.nodes_by_layer(new).values()
+        cap_updates = self.cap.nodes_by_layer(new).values()
+        dem_updates = self.dem.nodes_by_layer(new).values()
         diffs = [cap - dem for cap,dem in zip(cap_updates, dem_updates)]
         return NodeConstraints(self.mod, diffs)
 
     @property
     def true_diff(self):
         def stage_diff(i):
-            return self.capacity.true[i] - self.demand.true[i]
-        return EdgeConstraints(self.mod, [stage_diff(i) for i in range(0, len(self.capacity))])
+            return self.cap.true[i] - self.dem.true[i]
+        return EdgeConstraints(self.mod, [stage_diff(i) for i in range(0, len(self.cap))])
 
 
     # How can we get the diffs by stage conveniently?

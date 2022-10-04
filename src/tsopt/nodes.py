@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Sep 26, 2022
+# Last Modified:  Oct 04, 2022
 
 import pandas as pd, numpy as np
 
@@ -64,6 +64,7 @@ class LayerNodes(LayerList):
         self[loc] = raw_sr_from_file(filename, excel)
 
 
+
 class LayerNodeBounds(LayerList):
     dtype = NodeBoundsDF
     def __init__(self, mod, demand, capacity):
@@ -77,11 +78,14 @@ class LayerNodeBounds(LayerList):
         new = [item for sublist in [[df, sr, sr] for df in dfs[:-1]] for item in sublist] + [dfs[-1]]
         df = pd.concat(new)
         return df._repr_html_()
-        # return "".join([df._repr_html_() for df in self])
 
 
 
 class NodeConstraints(LayerNodes):
+
+    @property
+    def notnull(self):
+        return LayerList(self.mod, [NodeSR(sr[sr.notnull()]) for sr in self])
 
     @property
     def flow(self):
