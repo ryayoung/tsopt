@@ -4,9 +4,6 @@ test
 *.ipynb_checkpoints
 *.egg-info
 
-README.rst
-setup.cfg
-setup.py
 .DS_Store
 *test.py
 

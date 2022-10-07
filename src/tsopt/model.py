@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 04, 2022
+# Last Modified:  Oct 07, 2022
 import pandas as pd
 import numpy as np
 import pulp as pl
@@ -22,21 +22,42 @@ class Model:
     """
 
     def __init__(self,
-            layers: list,
-            edge_costs: list,
+            layers: list|None = None,
+            edge_costs: list|None = None,
             excel_file=None,
+            units=None,
         ):
 
-        self.units = 'units'
-        self.excel_file = pd.ExcelFile(excel_file) if isinstance(excel_file, str) else excel_file
+        self._layers = layers
+        self._edge_costs = edge_costs
+        self.excel_file = excel_file
+        self.units = units if units else 'units'
 
-        self.dv = ModelConstants(self, layers, edge_costs)
+        if layers and edge_costs:
+            self.init_model_components()
+
+
+    def init_model_components(self) -> bool:
+        if not self._layers or not self._edge_costs:
+            return False
+        if all(c == None for c in self._edge_costs):
+            return False
+        self.excel_file = pd.ExcelFile(self.excel_file) if isinstance(self.excel_file, str) else self.excel_file
+
+        self.dv = ModelConstants(self, self._layers, self._edge_costs)
         self.pl_mod = None
 
         # CONSTRAINTS
-        self.net = NetworkValuesContainer(None, None)
-        self.node = NodesContainer(self)
-        self.edge = EdgesContainer(self)
+        self.con = ConstraintsContainer(self)
+
+        return True
+
+    @property
+    def net(self): return self.con.net
+    @property
+    def node(self): return self.con.node
+    @property
+    def edge(self): return self.con.edge
 
 
     def var(self, var_name):
@@ -126,7 +147,7 @@ class Model:
         total_cost = 0
         for stg, df in enumerate(self.edge.bounds):
             for inp, out in zip(df.inp, df.out):
-                total_cost += self.var(inp)[out] * self.dv.cost[stg].loc[inp, out]
+                total_cost += self.var(inp)[out] * self.dv.costs[stg].loc[inp, out]
         self.add(total_cost)
 
         # USER-DEFINED CONSTRAINTS
@@ -163,7 +184,7 @@ class Model:
         print(*[f'{length}x {plural(layer)}' for layer, length in zipped], sep=' -> ')
         print()
         print("---- COSTS ----")
-        for i, df in enumerate(self.dv.cost):
+        for i, df in enumerate(self.dv.costs):
             print(f'{self.dv.layers[i]} -> {self.dv.layers[i+1]}')
             display(df)
 

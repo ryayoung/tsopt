@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Sep 26, 2022
+# Last Modified:  Oct 07, 2022
 import pandas as pd
 import numpy as np
 import re
@@ -38,11 +38,11 @@ class ModelConstants:
 
         def node_labels(layer_idx, num_of_nodes) -> tuple:
             abbrev = self.abbrevs[layer_idx]
-            return tuple(abbrev + str(n + self.node_label_offset()) for n in range(0, num_of_nodes))
+            return tuple(abbrev + str(n + Global.base) for n in range(0, num_of_nodes))
 
 
         def coef_data_from_user_input(value) -> pd.DataFrame:
-            if isinstance(value, list) or isinstance(value, tuple):
+            if isinstance(value, tuple):
                 df = pd.DataFrame(np.ones(value))
             elif isinstance(value, str):
                 df = raw_df_from_file(value, self.mod.excel_file)
@@ -72,7 +72,7 @@ class ModelConstants:
             df.columns = node_labels(i+1, len(df.columns))
             dfs.append(df)
 
-        self._cost = StageEdges(self.mod, dfs)
+        self._costs = StageEdges(self.mod, dfs)
         self._nodes = nodes_from_stage_dfs(dfs)
         self._stage_nodes = tuple((inp, out) for inp, out in staged(self.nodes))
         self._stage_edges = tuple( tuple( tuple( (inp, out) for out in outs ) for inp in inps )
@@ -92,15 +92,11 @@ class ModelConstants:
     @property
     def stage_edges(self): return self._stage_edges
     @property
-    def cost(self): return self._cost
+    def costs(self): return self._costs
 
     @property
     def sizes(self):
         return tuple([len(n) for n in self._nodes])
-
-    @staticmethod
-    def node_label_offset():
-        return 0
 
 
     def layer_index(self, val) -> int:

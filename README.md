@@ -6,7 +6,7 @@ Source code is [here](https://github.com/ryayoung/tsopt/tree/main/src/tsopt)
 
 </br>
 
-> Something...
+> Something goes here...
 
 <br>
 

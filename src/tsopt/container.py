@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 04, 2022
+# Last Modified:  Oct 07, 2022
 from dataclasses import dataclass
 from tsopt.edges import *
 from tsopt.nodes import *
@@ -20,7 +20,7 @@ class Container:
     dem_type = None
     cap_type = None
 
-    def __init__(self, mod, demand=None, capacity=None):
+    def __init__(self, mod, demand:list=None, capacity:list=None):
         self._mod = mod
 
         cls = self.__class__
@@ -46,6 +46,16 @@ class Container:
     @property
     def cap(self): return self._cap
 
+    @dem.setter
+    def dem(self, new:list):
+        for i, elem in enumerate(new):
+            self._dem[i] = elem
+
+    @cap.setter
+    def cap(self, new:list):
+        for i, elem in enumerate(new):
+            self._cap[i] = elem
+
     @property
     def bounds(self):
         pass
@@ -59,7 +69,7 @@ class Container:
 
 
 @dataclass
-class NetworkValuesContainer:
+class NetworkValues:
     dem: float
     cap: float
 
@@ -149,3 +159,11 @@ class EdgesContainer(Container):
     @property
     def true_node_diff(self):
         return self.get_node_diff(False)
+
+
+class ConstraintsContainer:
+    def __init__(self, mod, net=None, node=None, edge=None):
+        self.net = net if net else NetworkValues(None, None)
+        self.node = node if node else NodesContainer(mod)
+        self.edge = edge if edge else EdgesContainer(mod)
+

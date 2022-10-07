@@ -1,0 +1,43 @@
+[build-system]
+# requires: list of packages needed to build my package
+requires = ["hatchling"]
+# build-backend: name of the python object that frontends use to perform build
+build-backend = "hatchling.build"
+
+[project]
+name = "tsopt"
+version = "0.0.36"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Ryan Young", email = "r5y@pm.me" },
+]
+maintainers = [
+    { name = "Ryan Young", email = "r5y@pm.me" },
+]
+description = "Easily solve any multi-stage transshipment cost minimization optimization problem"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pandas",
+    "pulp",
+    "matplotlib",
+    "seaborn",
+    "plotly",
+]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.9",
+    "Operating System :: OS Independent",
+]
+keywords = [
+    "supply chain",
+    "optimization",
+    "inventory",
+    "network flow",
+    "linear programming"
+]
+
+
+[project.urls]
+"Homepage" = "https://github.com/ryayoung/tsopt"
+"Web App" = "https://tsopt.net"

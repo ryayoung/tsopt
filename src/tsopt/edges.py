@@ -3,6 +3,7 @@
 
 import pandas as pd, numpy as np
 
+from tsopt.globals import *
 from tsopt.types import *
 from tsopt.nodes import *
 
@@ -20,26 +21,31 @@ class StageEdges(StageList):
 
     def set_element_format(self, idx, df):
         curr = super().__getitem__(idx)
+        if isinstance(df, int) or isinstance(df, float):
+            curr.iloc[:] = df
+            return curr
         df = pd.DataFrame(df)
         df.index, df.columns, = curr.index, curr.columns
         return df.replace(-1, np.nan).astype(float)
+
+
+    @staticmethod
+    def find_node(df, loc) -> (int, int):
+        if isinstance(loc, tuple):
+            return loc
+        # Loc must be string
+        node, cols, rows = loc.upper(), list(df.columns), list(df.index)
+        if node in cols:
+            return 1, cols.index(node)
+        elif node in rows:
+            return 0, rows.index(node)
 
 
     def node_iloc_slice(self, idx, loc) -> (int, int):
         # Node can either be string or tuple
         # Returns node location with RELATIVE layer (0 for input, 1 for output)
         df = super().__getitem__(idx)
-
-        def find_node(loc):
-            if isinstance(loc, tuple):
-                return loc
-            node, cols, rows = loc.upper(), list(df.columns), list(df.index)
-            if node in cols:
-                return 1,cols.index(node)
-            elif node in rows:
-                return 0,rows.index(node)
-
-        loc = tuple(find_node(i) for i in loc)
+        loc = tuple(self.find_node(df, i) for i in loc)
 
         vals = [slice(None,None,None),slice(None,None,None)]
         for axis, idx in loc:
@@ -127,12 +133,12 @@ class StageEdgeBoundsMelted(StageList):
 
 
 class EdgeQuantities(StageEdges):
-    ''' Stores solved-model quantities. '''
+    ''' Stores SOLVED-MODEL quantities. '''
 
     @property
     def node(self):
         ''' Easy to calculate since output and input will always be equal for any node. '''
-        return [df.sum(axis=1) for df in self] + [self[-1].sum(axis=0)]
+        return LayerNodes(self.mod, [df.sum(axis=1) for df in self] + [self[-1].sum(axis=0)])
 
 
 class EdgeConstraints(StageEdges):
