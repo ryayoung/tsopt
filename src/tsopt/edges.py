@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 07, 2022
+# Last Modified:  Oct 08, 2022
 
 import pandas as pd, numpy as np
 
@@ -7,12 +7,12 @@ from tsopt.globals import *
 from tsopt.types import *
 from tsopt.nodes import *
 
-class StageEdges(StageList):
+class StageEdges(ListData):
     dtype = EdgeDF
 
     @property
     def default_template(self):
-        return self.mod.dv.template_stages()
+        return self.mod.template_stages()
 
     @property
     def melted(self):
@@ -100,20 +100,48 @@ class StageEdges(StageList):
         self[loc] = raw_df_from_file(filename, excel)
 
 
-    def push(self):
-        assert len(self) == len(self.mod.nodes)-2, "Can't push until new nodes are added"
-        idxs, cols = tuple(staged(self.mod.nodes))[-1]
-        self.append(self.cls_dtype(np.nan, index=idxs, columns=cols))
+    # def push(self, fill_val=np.nan):
+        # assert len(self) <= len(self.mod.nodes)-2, f"Can't push until new nodes are added. Nodes loaded for {len(self.mod.nodes)} layers. Self is {len(self)} length."
+        # idxs, cols = tuple(staged(self.mod.nodes))[-1]
+        # self.append(self.cls_dtype(fill_val, index=idxs, columns=cols))
 
 
-    def push_nodes(self, layer, amount):
-        ...
+    def sync_length(self, fill_val=np.nan):
+        diff = len(self.mod.nodes) - (1 + len(self))
+        if diff > 0:
+            for _ in range(diff):
+                idxs, cols = self.mod.stage_nodes[len(self)]
+                self.append(self.cls_dtype(fill_val, index=idxs, columns=cols))
+        elif diff < 0:
+            for _ in range(diff):
+                self.pop()
 
-    def pop_nodes(self, layer, amount):
-        ...
+
+    def push_nodes(self, layer, n, fill_val=np.nan):
+        ''' If flow layer, we must push to columns of [layer-1] and to index of [layer] '''
+        abbrev = self.mod.abbrevs[layer]
+        if layer == 0:
+            self[0] = self[0].push(abbrev, n, axis=0, fill_val=fill_val)
+        elif layer == len(self):
+            self[-1] = self[-1].push(abbrev, n, axis=1, fill_val=fill_val)
+        else:
+            self[layer-1] = self[layer-1].push(abbrev, n, axis=1, fill_val=fill_val)
+            self[layer] = self[layer].push(abbrev, n, axis=0, fill_val=fill_val)
 
 
-    def refresh_nodes(self, layer_idx=None):
+    def pop_nodes(self, layer, n):
+        ''' If flow layer, we must pop from columns of [layer-1] and from index of [layer] '''
+        if layer == 0:
+            self[0] = self[0].pop(n, axis=0)
+        elif layer == len(self):
+            self[-1] = self[-1].pop(n, axis=1)
+        else:
+            self[layer-1] = self[layer-1].pop(n, axis=1) # Columns
+            self[layer] = self[layer].pop(n, axis=0) # Indexes
+
+
+    def refactor_nodes(self, layer_idx=None):
+        ''' Use this only when names change, not when shape changes '''
         nodes = self.mod.nodes
         if not layer_idx:
             for i, df in enumerate(self):
@@ -131,8 +159,31 @@ class StageEdges(StageList):
 
 
 
+class StageEdgeCosts(StageEdges):
 
-class StageEdgesMelted(StageList):
+    @property
+    def default_template(self):
+        return self.mod.template_stages(fill=0.0)
+
+    def sync_length(self, fill_val=0.0):
+        super().sync_length(fill_val)
+
+    def push_nodes(self, layer, n, fill_val=0.0):
+        super().push_nodes(layer, n, fill_val)
+
+
+    def set_element_format(self, idx, df):
+        curr = super().__getitem__(idx)
+        if isinstance(df, int) or isinstance(df, float):
+            curr.iloc[:] = float(df)
+            return curr
+        df = pd.DataFrame(df)
+        df.index, df.columns, = self.mod.stage_nodes[idx]
+        return df.replace(-1, 0).astype(float)
+
+
+
+class StageEdgesMelted(ListData):
     dtype = EdgeMeltedDF
     def __init__(self, mod, stage_edges):
         dfs = [df.reset_index(
@@ -144,7 +195,7 @@ class StageEdgesMelted(StageList):
 
     @property
     def notnull(self):
-        return StageList(self.mod, [self.cls_dtype(df[~df.val.isna()]) for df in self])
+        return ListData(self.mod, [self.cls_dtype(df[~df.val.isna()]) for df in self])
 
     @property
     def series(self):
@@ -155,7 +206,7 @@ class StageEdgesMelted(StageList):
         return dfs
 
 
-class StageEdgeBoundsMelted(StageList):
+class StageEdgeBoundsMelted(ListData):
     dtype = EdgeMeltedBoundsDF
     def __init__(self, mod, demand_edges_melted, capacity_edges_melted):
         dfs = [pd.merge(dem, cap, how='inner', on=['inp', 'out']).rename(columns={'val_x':'dem', 'val_y':'cap'})
@@ -177,7 +228,7 @@ class EdgeConstraints(StageEdges):
 
     @property
     def notnull(self):
-        return StageList(self.mod, [EdgeDF(df[~df.val.isna()]) for df in self.melted])
+        return ListData(self.mod, [EdgeDF(df[~df.val.isna()]) for df in self.melted])
 
 
 
@@ -243,7 +294,7 @@ class EdgeCapacity(EdgeConstraints):
                 sums2 = combine_if(sums2, cap2, min)
             return [sums1, sums2]
 
-        return [lowered(i) for i in self.mod.dv.range_stage()]
+        return [lowered(i) for i in self.mod.range_stage()]
 
 
     def nodes_by_layer(self, new=True) -> LayerNodes:
@@ -280,7 +331,7 @@ class EdgeDemand(EdgeConstraints):
                 sums2 = combine_if(sums2, dem2, max)
             return [sums1, sums2]
 
-        return [raised(i) for i in self.mod.dv.range_stage()]
+        return [raised(i) for i in self.mod.range_stage()]
 
 
     def nodes_by_layer(self, new=True) -> LayerNodes:

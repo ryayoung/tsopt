@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 04, 2022
+# Last Modified:  Oct 08, 2022
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -12,7 +12,7 @@ class QuantityPlots:
     def __init__(self, mod, vals):
         self.mod = mod
         self.vals = vals
-        self.layers, self.abbrevs = self.mod.dv.layers, self.mod.dv.abbrevs
+        self.layers, self.abbrevs = self.mod.layers, self.mod.abbrevs
         self.node = NodeQuantityPlots(mod, vals.node)
         self.edge = EdgeQuantityPlots(mod, vals)
 
@@ -21,8 +21,8 @@ class QuantityPlots:
 class NodeQuantityPlots:
     def __init__(self, mod, nodes):
         self.mod = mod
-        self.layers = self.mod.dv.layers
-        self.abbrevs = self.mod.dv.abbrevs
+        self.layers = self.mod.layers
+        self.abbrevs = self.mod.abbrevs
         self.nodes = nodes
 
 
@@ -43,8 +43,8 @@ class NodeQuantityPlots:
 class EdgeQuantityPlots:
     def __init__(self, mod, edges):
         self.mod = mod
-        self.layers = self.mod.dv.layers
-        self.abbrevs = self.mod.dv.abbrevs
+        self.layers = self.mod.layers
+        self.abbrevs = self.mod.abbrevs
         self.edges = edges
         self.in_out = ['inp', 'out']
 

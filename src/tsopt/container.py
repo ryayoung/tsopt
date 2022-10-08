@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 07, 2022
+# Last Modified:  Oct 08, 2022
 from dataclasses import dataclass
 from tsopt.edges import *
 from tsopt.nodes import *
@@ -60,9 +60,9 @@ class Container:
     def bounds(self):
         pass
 
-    def refresh_nodes(self, *args, **kwargs):
-        self.dem.refresh_nodes(*args, **kwargs)
-        self.cap.refresh_nodes(*args, **kwargs)
+    def refactor_nodes(self, *args, **kwargs):
+        self.dem.refactor_nodes(*args, **kwargs)
+        self.cap.refactor_nodes(*args, **kwargs)
 
     def push_nodes(self, *args, **kwargs):
         self.dem.push_nodes(*args, **kwargs)
@@ -72,13 +72,18 @@ class Container:
         self.dem.pop_nodes(*args, **kwargs)
         self.cap.pop_nodes(*args, **kwargs)
 
-    def push(self):
-        self.dem.push()
-        self.cap.push()
+    # def push(self):
+        # self.dem.push()
+        # self.cap.push()
+# 
+    # def pop(self):
+        # self.dem.pop()
+        # self.cap.pop()
 
-    def pop(self):
-        self.dem.pop()
-        self.cap.pop()
+    def sync_length(self, *args, **kwargs):
+        self.dem.sync_length(*args, **kwargs)
+        self.cap.sync_length(*args, **kwargs)
+
 
     def __len__(self):
         return len(self.cap)
@@ -106,7 +111,7 @@ class LayerValuesContainer(Container):
     @property
     def bounds(self):
         return pd.DataFrame(zip(self.dem, self.cap),
-                    index=self.mod.dv.abbrevs, columns=['dem','cap'])
+                    index=self.mod.abbrevs, columns=['dem','cap'])
 
     @property
     def diff(self):
@@ -187,18 +192,22 @@ class ConstraintsContainer:
         self.edge = edge if edge else EdgesContainer(mod)
 
 
-    def refresh_nodes(self, *args, **kwargs):
-        self.node.refresh_nodes(*args, **kwargs)
-        self.edge.refresh_nodes(*args, **kwargs)
+    def refactor_nodes(self, *args, **kwargs):
+        self.node.refactor_nodes(*args, **kwargs)
+        self.edge.refactor_nodes(*args, **kwargs)
 
 
-    def push(self):
-        self.node.push()
-        self.edge.push()
+    # def push(self):
+        # self.node.push()
+        # self.edge.push()
+# 
+    # def pop(self):
+        # self.node.pop()
+        # self.edge.pop()
 
-    def pop(self):
-        self.node.pop()
-        self.edge.pop()
+    def sync_length(self, *args, **kwargs):
+        self.node.sync_length(*args, **kwargs)
+        self.edge.sync_length(*args, **kwargs)
 
 
     def push_nodes(self, *args, **kwargs):

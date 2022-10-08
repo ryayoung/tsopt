@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 07, 2022
+# Last Modified:  Oct 08, 2022
 import pandas as pd
 import numpy as np
 import pulp as pl
@@ -15,7 +15,9 @@ from tsopt.solved.plots import *
 class SolvedModel:
     def __init__(self, mod):
         self.mod = mod
-        self.dv = mod.dv
+        self.layers = mod.layers
+        self.nodes = mod.nodes
+        self.abbrevs = mod.abbrevs
         self.pl_mod = mod.pl_mod
         self.plot = QuantityPlots(self.mod, self.quantities)
 
@@ -39,14 +41,14 @@ class SolvedModel:
     def quantities(self):
         return EdgeQuantities(self.mod, [ pd.DataFrame(columns=df.columns, index=df.index,
                 data=[[getattr(self.pl_mod, inp)[outp].varValue for outp in df.columns] for inp in df.index])
-            for df in self.dv.costs
+            for df in self.mod.costs
         ])
 
     def display(self):
         print(f"MIN. COST: ${round(self.obj_val, 2):,}\n")
         print("FLOW QUANTITIES")
         for i, df in enumerate(self.quantities):
-            print(f'{self.dv.layers[i]} -> {self.dv.layers[i+1]}')
+            print(f'{self.layers[i]} -> {self.layers[i+1]}')
             display(self.quantities[i].astype(np.int64))
 
 
@@ -84,7 +86,7 @@ class SolvedModel:
         col_inp, col_out = 'inp', 'out'
         if sum_inflow or sum_outflow:
             cols = (col_inp, col_out)
-            abbrevs = self.dv.abbrevs[stage:stage+2]
+            abbrevs = self.abbrevs[stage:stage+2]
             if sum_outflow:
                 cols, abbrevs = cols[::-1], abbrevs[::-1]
 
@@ -95,7 +97,7 @@ class SolvedModel:
         df['outflow_nodes'] = df[col_out]
         df = df.drop(columns=[col_inp, col_out])
         return df
-        # label_pref = (self.dv.abbrevs[stage], self.dv.abbrevs[stage+1])
+        # label_pref = (self.abbrevs[stage], self.abbrevs[stage+1])
 # 
         # if sum_outflow:
             # df = df.sum(axis=1).to_frame().rename(columns={0:label_pref[1]})
@@ -104,7 +106,7 @@ class SolvedModel:
 # 
         # df = pd.melt(df).rename(columns={'variable':'outflow_nodes', 'value':'units'})
         # df['Route'] = self.label_edges(
-                # sum_inflow, sum_outflow, self.dv.nodes[stage], df.outflow_nodes, label_pref[0])
+                # sum_inflow, sum_outflow, self.nodes[stage], df.outflow_nodes, label_pref[0])
         # return df
 
 
@@ -123,7 +125,7 @@ class SolvedModel:
 
     def plot_quantity(self, stage=None, *args, **kwargs):
         if stage == None:
-            stage = [*self.dv.range_stage()]
+            stage = [*self.range_stage()]
 
         if is_list_or_tuple(stage):
             if 'ax' in kwargs:
@@ -145,7 +147,7 @@ class SolvedModel:
             **kwargs
             ):
 
-        layr_curr, layr_next = self.dv.layers[stage:stage+2]
+        layr_curr, layr_next = self.layers[stage:stage+2]
 
         # Defaults based on stage
         if legend == dict():

@@ -1,26 +1,26 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Sep 26, 2022
+# Last Modified:  Oct 08, 2022
 import pandas as pd, numpy as np
 from tsopt.types import *
 
 
-class LayerValues(LayerList):
+class LayerValues(ListData):
 
     @property
     def default_template(self):
-        return [np.nan for _ in self.mod.dv.layers]
+        return [np.nan for _ in self.mod.layers]
 
     def __getitem__(self, loc):
-        idx = self.mod.dv.layer_index(loc)
+        idx = self.mod.layer_index(loc)
         return super().__getitem__(idx)
 
     def __setitem__(self, loc, val):
-        idx = self.mod.dv.layer_index(loc)
+        idx = self.mod.layer_index(loc)
         val = float(val)
         super().__setitem__(idx, val)
 
     def _repr_html_(self):
-        sr = NodeSR(self, index=self.mod.dv.abbrevs)
+        sr = NodeSR(self, index=self.mod.abbrevs)
         return sr._repr_html_()
 
 

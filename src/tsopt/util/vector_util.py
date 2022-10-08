@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 04, 2022
+# Last Modified:  Oct 08, 2022
 
 import pandas as pd
 import numpy as np
@@ -60,6 +60,8 @@ def staged(iterable):
             a b
             b c
     '''
+    if len(iterable) == 0:
+        return
     iterator = iter(iterable)
     curr = next(iterator)
     for nxt in iterator:

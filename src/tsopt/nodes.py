@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 07, 2022
+# Last Modified:  Oct 08, 2022
 
 import pandas as pd, numpy as np
 
@@ -8,7 +8,7 @@ from tsopt.util import *
 from tsopt.values import *
 
 
-class LayerNodes(LayerList):
+class LayerNodes(ListData):
     dtype = NodeSR
 
     @property
@@ -18,7 +18,7 @@ class LayerNodes(LayerList):
 
     @property
     def default_template(self):
-        return self.mod.dv.template_layers()
+        return self.mod.template_layers()
 
     def set_element_format(self, idx, sr:any):
         curr = super().__getitem__(idx)
@@ -30,16 +30,16 @@ class LayerNodes(LayerList):
     def loc_to_layer_and_node_indexes(self, loc) -> (int, int or None):
         # Layer and node indexes (0, 3) or ('Warehouse', 3) or ('W', 3)
         if isinstance(loc, tuple) or isinstance(loc, list):
-            layer = self.mod.dv.layer_index(loc[0])
+            layer = self.mod.layer_index(loc[0])
             return (layer, loc[1])
         else:
             try:
                 # Layer via int index, string name, or abbrev
-                layer = self.mod.dv.layer_index(loc)
+                layer = self.mod.layer_index(loc)
                 return (layer, None)
             except Exception:
                 # Layer and node via string id - 'B2'
-                return self.mod.dv.node_str_to_layer_and_node_indexes(loc)
+                return self.mod.node_str_to_layer_and_node_indexes(loc)
 
 
     def __getitem__(self, loc):
@@ -64,19 +64,32 @@ class LayerNodes(LayerList):
         self[loc] = raw_sr_from_file(filename, excel)
 
 
-    def push(self):
-        assert len(self) == len(self.mod.nodes)-1, "Can't push until new nodes are added"
-        self.append(self.cls_dtype(np.nan, index=self.mod.nodes[-1]))
+    # def push(self):
+        # assert len(self) == len(self.mod.nodes)-1, "Can't push until new nodes are added"
+        # self.append(self.cls_dtype(np.nan, index=self.mod.nodes[-1]))
+
+    def sync_length(self, fill_val=np.nan):
+        diff = len(self.mod.nodes) - len(self)
+        if diff > 0:
+            for _ in range(diff):
+                idxs = self.mod.nodes[len(self)]
+                self.append(self.cls_dtype(fill_val, index=idxs))
+        elif diff < 0:
+            for _ in range(diff):
+                self.pop()
 
 
-    def push_nodes(self, layer, amount):
-        ...
-
-    def pop_nodes(self, layer, amount):
-        ...
+    def push_nodes(self, layer, n):
+        abbrev = self.mod.abbrevs[layer]
+        self[layer] = self[layer].push(abbrev, n)
 
 
-    def refresh_nodes(self, layer_idx=None):
+    def pop_nodes(self, layer, n):
+        self[layer] = self[layer].pop(n)
+
+
+    def refactor_nodes(self, layer_idx=None):
+        ''' Use this only when names change, not when shape changes '''
         nodes = self.mod.nodes
         if not layer_idx:
             for i, sr in enumerate(self):
@@ -86,7 +99,7 @@ class LayerNodes(LayerList):
 
 
 
-class LayerNodeBounds(LayerList):
+class LayerNodeBounds(ListData):
     dtype = NodeBoundsDF
     def __init__(self, mod, demand, capacity):
         dfs = [ pd.concat([dem, cap], axis=1).rename(columns={0: 'dem', 1: 'cap'})
@@ -106,7 +119,7 @@ class NodeConstraints(LayerNodes):
 
     @property
     def notnull(self):
-        return LayerList(self.mod, [NodeSR(sr[sr.notnull()]) for sr in self])
+        return ListData(self.mod, [NodeSR(sr[sr.notnull()]) for sr in self])
 
     @property
     def flow(self):

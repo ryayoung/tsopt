@@ -1,11 +1,10 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 07, 2022
+# Last Modified:  Oct 08, 2022
 import pandas as pd
 import numpy as np
 import pulp as pl
 from copy import copy
 
-from tsopt.constants import *
 from tsopt.types import *
 from tsopt.edges import *
 from tsopt.nodes import *
@@ -22,22 +21,23 @@ class Model:
         ):
 
         self._layers = []
-        self.layers = layers
         self._shape = []
-        self.shape = shape
-        self.nodes = [self.get_nodes(i) for i in range(len(self.layers))]
+        self.nodes = []
+        self.costs = StageEdgeCosts(self)
+        self.con = ConstraintsContainer(self)
 
-        self.excel_file = pd.ExcelFile(excel_file)
+        self.layers = layers
+        self.shape = shape
+
+        self.excel_file = pd.ExcelFile(excel_file) if excel_file else None
         self.units = units
         self.pl_mod = None
-        self.costs = StageEdges(self)
-        self.con = ConstraintsContainer(self)
 
 
     @property
     def layers(self): return self._layers
     @layers.setter
-    def layers(self, new:list): self.update_layers(new)
+    def layers(self, new:list): self.set_layers(new)
 
 
     @property
@@ -46,8 +46,10 @@ class Model:
     def shape(self, new:list):
         # Can't add or remove shape this way
         assert len(new) == len(self._shape), "Incorrect length"
+        curr = self._shape
         for layer_idx, new_dim in enumerate(new):
-            self.update_dimension(layer_idx, new_dim)
+            if new_dim != curr[layer_idx]:
+                self.update_shape(layer_idx, new_dim)
 
 
     @property
@@ -67,41 +69,14 @@ class Model:
 
     def get_nodes(self, idx) -> list:
         length = self.shape[idx]
-        abbrev = self.abbrevs[layer_idx]
+        abbrev = self.abbrevs[idx]
         return [abbrev + str(n + Global.base) for n in range(0, length)]
 
-
-    def refresh_format(self):
-        # Call this after updating layers or shape
-        curr = copy(self.nodes)
-        new = [self.get_nodes(i) for i in range(len(self))]
-        self.nodes = new
-
-        # Push/pop layers
-        diff_layers = len(new) - len(curr)
-        for _ in range(abs(diff_layers)):
-            if diff_layers > 0:
-                self.costs.push()
-                self.con.push()
-            elif diff_layers < 0:
-                self.costs.pop()
-                self.con.pop()
-
-        # Push/pop nodes
-        diff_nodes = [len(n) - len(c) for n,c in zip(new, curr)]
-        for i, diff in enumerate(diff_nodes):
-            if diff > 0:
-                self.costs.push_nodes(layer=i, amount=diff)
-                self.con.push_nodes(layer=i, amount=diff)
-            elif diff < 0:
-                self.costs.pop_nodes(layer=i, amount=diff)
-                self.con.pop_nodes(layer=i, amount=diff)
-
-        # Refresh where existing layer changed node format but not maybe not shape
-        changed = [i for i in range(min(len(new), len(curr))) if new[i][0] != curr[i][0]]
-        for i in changed:
-            self.costs.refresh_nodes(i)
-            self.con.refresh_nodes(i)
+    def refresh_nodes(self, idx=None):
+        if idx:
+            self.nodes[idx] = self.get_nodes(idx)
+        else:
+            self.nodes = [self.get_nodes(i) for i in range(len(self))]
 
 
     def set_layers(self, new:list):
@@ -115,7 +90,28 @@ class Model:
 
         if diff > 0: self._shape += [1 for _ in range(diff)]
         elif diff < 0: self._shape = self._shape[:diff]
-        self.refresh_format()
+
+        self.refresh_nodes()
+
+        # REFRESH FORMAT
+        # - Either layers were added/removed, or they were renamed
+        self.costs.sync_length()
+        self.con.sync_length()
+        # for _ in range(abs(diff)):
+            # if diff > 0:
+                # self.costs.sync_length()
+                # self.con.sync_length()
+                # self.costs.push(fill_val=0)
+                # self.con.push()
+            # elif diff < 0:
+                # self.costs.pop()
+                # self.con.pop()
+
+        # Handle renamed layers
+        changed = [i for i in range(min(len(new),len(curr))) if new[i] != curr[i]]
+        for i in changed:
+            self.costs.refactor_nodes(i)
+            self.con.refactor_nodes(i)
 
 
     def push_layer(self, new:str, size:int=1):
@@ -123,8 +119,8 @@ class Model:
         self._layers += [new]
         self._shape += [size]
         self.nodes += [self.get_nodes(len(self.layers)-1)]
-        self.costs.push()
-        self.con.push()
+        self.costs.sync_length()
+        self.con.sync_length()
 
     def pop_layer(self):
         self._layers = self._layers[:-1]
@@ -134,15 +130,19 @@ class Model:
         self.con.pop()
 
 
-    def update_dimension(self, idx:int, new:int):
-        curr = copy(self._shape[idx])
-        if new == curr:
-            return
-
+    def update_shape(self, idx:int, new:int):
+        curr = self._shape[idx]
         diff = new - curr
+        if diff == 0:
+            return
         self._shape[idx] = new
-
-        self.refresh_format()
+        self.refresh_nodes(idx)
+        if diff > 0:
+            self.costs.push_nodes(layer=idx, n=diff, fill_val=0)
+            self.con.push_nodes(layer=idx, n=diff)
+        elif diff < 0:
+            self.costs.pop_nodes(layer=i, n=abs(diff))
+            self.con.pop_nodes(layer=i, n=abs(diff))
 
 
     def _validate_layer_names(self, layers):
@@ -235,13 +235,13 @@ class Model:
 
     def sum_outflow(self, idx, node):
         ''' for node B3, return sum(B3[C1], B3[C2], B3[C3]) '''
-        output_nodes = self.dv.nodes[idx + 1]
+        output_nodes = self.nodes[idx + 1]
         return sum(self.var(node)[out] for out in output_nodes)
 
 
     def sum_inflow(self, idx, node):
         ''' for node B3, return sum(A1[B3], A2[B3], A3[B3]) '''
-        input_nodes = self.dv.nodes[idx - 1]
+        input_nodes = self.nodes[idx - 1]
         return sum(self.var(inp)[node] for inp in input_nodes)
 
 
@@ -254,7 +254,7 @@ class Model:
         if self.net.empty:
             return
         # Measure flow in stage 0 since it must be the same in all stages
-        total_flow = sum( self.sum_outflow(0, node) for node in self.dv.nodes[0] )
+        total_flow = sum( self.sum_outflow(0, node) for node in self.nodes[0] )
 
         if self.net.cap:
             self.add(total_flow <= self.net.cap)
@@ -305,7 +305,7 @@ class Model:
         self.pl_mod = pl.LpProblem('Transhipment', pl.LpMinimize)
 
         # DECISION VARS
-        for ins, outs in self.dv.stage_nodes:
+        for ins, outs in self.stage_nodes:
             for node in ins:
                 setattr(self.pl_mod, node, pl.LpVariable.dicts(node, list(outs), lowBound=0, upBound=None, cat='Integer'))
 
@@ -313,7 +313,7 @@ class Model:
         total_cost = 0
         for stg, df in enumerate(self.edge.bounds):
             for inp, out in zip(df.inp, df.out):
-                total_cost += self.var(inp)[out] * self.dv.costs[stg].loc[inp, out]
+                total_cost += self.var(inp)[out] * self.costs[stg].loc[inp, out]
         self.add(total_cost)
 
         # USER-DEFINED CONSTRAINTS
@@ -327,8 +327,8 @@ class Model:
         layers (ones which take inflow and produce outflow), each
         node's inflow must equal its outflow.
         '''
-        for flow in self.dv.range_flow():
-            for node in self.dv.nodes[flow]:
+        for flow in self.range_flow():
+            for node in self.nodes[flow]:
                 self.add(self.sum_inflow(flow, node) == self.sum_outflow(flow, node))
 
 
@@ -346,12 +346,12 @@ class Model:
 
 
     def display(self):
-        zipped = zip(self.dv.layers, [len(nodes) for nodes in self.dv.nodes])
+        zipped = zip(self.layers, [len(nodes) for nodes in self.nodes])
         print(*[f'{length}x {plural(layer)}' for layer, length in zipped], sep=' -> ')
         print()
         print("---- COSTS ----")
-        for i, df in enumerate(self.dv.costs):
-            print(f'{self.dv.layers[i]} -> {self.dv.layers[i+1]}')
+        for i, df in enumerate(self.costs):
+            print(f'{self.layers[i]} -> {self.layers[i+1]}')
             display(df)
 
         print("---- NODE CONSTRAINTS ----")

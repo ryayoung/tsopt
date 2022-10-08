@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Sep 26, 2022
+# Last Modified:  Oct 08, 2022
 
 import pandas as pd
 
@@ -44,16 +44,5 @@ class ListData(list):
 
     def _repr_html_(self):
         return "".join([item._repr_html_() for item in self])
-
-
-
-class LayerList(ListData):
-    def __len__(self):
-        return len(self.mod)
-
-
-class StageList(ListData):
-    def __len__(self):
-        return len(self.mod) - 1
 
 
