@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 04, 2022
+# Last Modified:  Oct 07, 2022
 
 import pandas as pd, numpy as np
 
@@ -25,7 +25,7 @@ class StageEdges(StageList):
             curr.iloc[:] = df
             return curr
         df = pd.DataFrame(df)
-        df.index, df.columns, = curr.index, curr.columns
+        df.index, df.columns, = self.mod.stage_nodes[idx]
         return df.replace(-1, np.nan).astype(float)
 
 
@@ -98,6 +98,38 @@ class StageEdges(StageList):
     def load(self, loc, filename, excel_file=None) -> None:
         excel = excel_file if excel_file else self.mod.excel_file
         self[loc] = raw_df_from_file(filename, excel)
+
+
+    def push(self):
+        assert len(self) == len(self.mod.nodes)-2, "Can't push until new nodes are added"
+        idxs, cols = tuple(staged(self.mod.nodes))[-1]
+        self.append(self.cls_dtype(np.nan, index=idxs, columns=cols))
+
+
+    def push_nodes(self, layer, amount):
+        ...
+
+    def pop_nodes(self, layer, amount):
+        ...
+
+
+    def refresh_nodes(self, layer_idx=None):
+        nodes = self.mod.nodes
+        if not layer_idx:
+            for i, df in enumerate(self):
+                self[i].index = nodes[i]
+                self[i].columns = nodes[i+1]
+        else:
+            layer_nodes = self.mod.nodes[layer_idx]
+            if layer_idx == 0:
+                self[0].index = layer_nodes
+            elif layer_idx == len(self):
+                self[-1].columns = layer_nodes
+            else:
+                self[layer_idx-1].columns = layer_nodes
+                self[layer_idx].index = layer_nodes
+
+
 
 
 class StageEdgesMelted(StageList):

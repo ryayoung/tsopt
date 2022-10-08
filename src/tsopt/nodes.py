@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 04, 2022
+# Last Modified:  Oct 07, 2022
 
 import pandas as pd, numpy as np
 
@@ -23,7 +23,7 @@ class LayerNodes(LayerList):
     def set_element_format(self, idx, sr:any):
         curr = super().__getitem__(idx)
         sr = sr[sr.columns[0]] if isinstance(sr, pd.DataFrame) else pd.Series(sr)
-        sr.index, sr.name = curr.index, None
+        sr.index, sr.name = self.mod.nodes[idx], None
         return sr.replace(-1, np.nan).astype(float)
 
 
@@ -62,6 +62,27 @@ class LayerNodes(LayerList):
     def load(self, loc, filename, excel_file=None) -> None:
         excel = excel_file if excel_file else self.mod.excel_file
         self[loc] = raw_sr_from_file(filename, excel)
+
+
+    def push(self):
+        assert len(self) == len(self.mod.nodes)-1, "Can't push until new nodes are added"
+        self.append(self.cls_dtype(np.nan, index=self.mod.nodes[-1]))
+
+
+    def push_nodes(self, layer, amount):
+        ...
+
+    def pop_nodes(self, layer, amount):
+        ...
+
+
+    def refresh_nodes(self, layer_idx=None):
+        nodes = self.mod.nodes
+        if not layer_idx:
+            for i, sr in enumerate(self):
+                self[i].index = nodes[i]
+        else:
+            self[layer_idx].index = nodes[layer_idx]
 
 
 

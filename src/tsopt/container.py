@@ -60,6 +60,26 @@ class Container:
     def bounds(self):
         pass
 
+    def refresh_nodes(self, *args, **kwargs):
+        self.dem.refresh_nodes(*args, **kwargs)
+        self.cap.refresh_nodes(*args, **kwargs)
+
+    def push_nodes(self, *args, **kwargs):
+        self.dem.push_nodes(*args, **kwargs)
+        self.cap.push_nodes(*args, **kwargs)
+
+    def pop_nodes(self, *args, **kwargs):
+        self.dem.pop_nodes(*args, **kwargs)
+        self.cap.pop_nodes(*args, **kwargs)
+
+    def push(self):
+        self.dem.push()
+        self.cap.push()
+
+    def pop(self):
+        self.dem.pop()
+        self.cap.pop()
+
     def __len__(self):
         return len(self.cap)
 
@@ -119,7 +139,6 @@ class NodesContainer(Container):
         return LayerNodes(self.mod, diffs)
 
 
-
 class EdgesContainer(Container):
     dem_type = EdgeDemand
     cap_type = EdgeCapacity
@@ -152,13 +171,13 @@ class EdgesContainer(Container):
 
 
     # How can we get the diffs by stage conveniently?
-    @property
-    def node_diff(self):
-        return self.get_node_diff(True)
-
-    @property
-    def true_node_diff(self):
-        return self.get_node_diff(False)
+    # @property
+    # def node_diff(self):
+        # return self.get_node_diff(True)
+# 
+    # @property
+    # def true_node_diff(self):
+        # return self.get_node_diff(False)
 
 
 class ConstraintsContainer:
@@ -166,4 +185,27 @@ class ConstraintsContainer:
         self.net = net if net else NetworkValues(None, None)
         self.node = node if node else NodesContainer(mod)
         self.edge = edge if edge else EdgesContainer(mod)
+
+
+    def refresh_nodes(self, *args, **kwargs):
+        self.node.refresh_nodes(*args, **kwargs)
+        self.edge.refresh_nodes(*args, **kwargs)
+
+
+    def push(self):
+        self.node.push()
+        self.edge.push()
+
+    def pop(self):
+        self.node.pop()
+        self.edge.pop()
+
+
+    def push_nodes(self, *args, **kwargs):
+        self.node.push_nodes(*args, **kwargs)
+        self.edge.push_nodes(*args, **kwargs)
+
+    def pop_nodes(self, *args, **kwargs):
+        self.node.pop_nodes(*args, **kwargs)
+        self.edge.pop_nodes(*args, **kwargs)
 

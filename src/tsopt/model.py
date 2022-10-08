@@ -3,7 +3,7 @@
 import pandas as pd
 import numpy as np
 import pulp as pl
-from dataclasses import dataclass
+from copy import copy
 
 from tsopt.constants import *
 from tsopt.types import *
@@ -16,99 +16,206 @@ class Model:
 
     def __init__(self,
             layers: list[str] = [],
-            dimensions: list[int] = [],
+            shape: list[int] = [],
             excel_file: str|pd.ExcelFile = None,
             units: str|None = 'units',
         ):
 
         self._layers = []
         self.layers = layers
-        self._dimensions = []
-        self.dimensions = dimensions
+        self._shape = []
+        self.shape = shape
+        self.nodes = [self.get_nodes(i) for i in range(len(self.layers))]
 
         self.excel_file = pd.ExcelFile(excel_file)
         self.units = units
         self.pl_mod = None
+        self.costs = StageEdges(self)
         self.con = ConstraintsContainer(self)
+
 
     @property
     def layers(self): return self._layers
-    @property
-    def dimensions(self): return self._dimensions
-
     @layers.setter
-    def layers(self, new:list):
-        for layer in new:
-            self.push_layer(layer)
+    def layers(self, new:list): self.update_layers(new)
 
-    @dimensions.setter
-    def dimensions(self, new:list):
-        assert len(new) == len(self._dimensions), "Incorrect length"
+
+    @property
+    def shape(self): return self._shape
+    @shape.setter
+    def shape(self, new:list):
+        # Can't add or remove shape this way
+        assert len(new) == len(self._shape), "Incorrect length"
         for layer_idx, new_dim in enumerate(new):
             self.update_dimension(layer_idx, new_dim)
 
 
-    def update_layers(self, new):
-        curr = self._layers
-        def layers_to_abbrevs(layers) -> tuple:
-            split_layer_to_parts = lambda layer: re.split("[ -\._]", layer)
-            first_char_each_part = lambda layer_parts: [s[0] for s in layer_parts]
-
-            abbrev_parts = [ first_char_each_part(split_layer_to_parts(layer)) for layer in layers ]
-            return tuple("".join(parts).upper() for parts in abbrev_parts)
-
-        self.abbrevs = layers_to_abbrevs(new)
-
-        def validate_layer_names(abbrevs) -> None:
-            assert len(set(abbrevs)) == len(abbrevs), \
-                    "\nLayer names must start with different letters.\n" \
-                    "You can work around this by using multiple words for layer names\n' \
-                    'For instance, 'manufacturing center' becomes 'MC')"
-            assert [not s[0].isdigit() for s in abbrevs], \
-                    f"Layer names must not start with a number."
-
-        validate_layer_names(self.abbrevs)
-        self._layers = new
-
-        if len(new) > len(curr):
-            self._dimensions.append(1)
-        if len(new) < len(curr):
-            self._dimensions.append(1)
+    @property
+    def abbrevs(self):
+        return [self.get_abbrev(l) for l in self._layers]
+    @property
+    def stage_nodes(self):
+        return list(staged(self.nodes))
+    @property
+    def stage_edges(self):
+        return [[[(i,o) for o in outs ] for i in inps ] for inps, outs in self.stage_nodes]
 
 
-    def update_dimension(self, idx, new):
-        curr = self._dimensions[idx]
-        self._dimensions[idx] = new
+    def get_abbrev(self, layer):
+        return "".join([ s[0].upper() for s in re.split("[ -\._]", layer) ])
+
+
+    def get_nodes(self, idx) -> list:
+        length = self.shape[idx]
+        abbrev = self.abbrevs[layer_idx]
+        return [abbrev + str(n + Global.base) for n in range(0, length)]
+
+
+    def refresh_format(self):
+        # Call this after updating layers or shape
+        curr = copy(self.nodes)
+        new = [self.get_nodes(i) for i in range(len(self))]
+        self.nodes = new
+
+        # Push/pop layers
+        diff_layers = len(new) - len(curr)
+        for _ in range(abs(diff_layers)):
+            if diff_layers > 0:
+                self.costs.push()
+                self.con.push()
+            elif diff_layers < 0:
+                self.costs.pop()
+                self.con.pop()
+
+        # Push/pop nodes
+        diff_nodes = [len(n) - len(c) for n,c in zip(new, curr)]
+        for i, diff in enumerate(diff_nodes):
+            if diff > 0:
+                self.costs.push_nodes(layer=i, amount=diff)
+                self.con.push_nodes(layer=i, amount=diff)
+            elif diff < 0:
+                self.costs.pop_nodes(layer=i, amount=diff)
+                self.con.pop_nodes(layer=i, amount=diff)
+
+        # Refresh where existing layer changed node format but not maybe not shape
+        changed = [i for i in range(min(len(new), len(curr))) if new[i][0] != curr[i][0]]
+        for i in changed:
+            self.costs.refresh_nodes(i)
+            self.con.refresh_nodes(i)
+
+
+    def set_layers(self, new:list):
+        curr = copy(self._layers)
+        diff = len(new) - len(curr)
         if new == curr:
             return
 
-        self.nodes[idx] = self._node_labels(idx, new)
+        self._validate_layer_names(new)
+        self._layers = new
 
-        # Update constraints
-        if new < curr:
-
-
-    def _node_labels(self, idx, length) -> tuple:
-        abbrev = self.abbrevs[layer_idx]
-        return tuple(abbrev + str(n + Global.base) for n in range(0, length))
+        if diff > 0: self._shape += [1 for _ in range(diff)]
+        elif diff < 0: self._shape = self._shape[:diff]
+        self.refresh_format()
 
 
-    def _layer_abbrev(self, layer) -> str:
-        split_layer_to_parts = lambda layer: re.split("[ -\._]", layer)
-        first_char_each_part = lambda layer_parts: [s[0] for s in layer_parts]
+    def push_layer(self, new:str, size:int=1):
+        self._validate_layer_names(self.layers + [new])
+        self._layers += [new]
+        self._shape += [size]
+        self.nodes += [self.get_nodes(len(self.layers)-1)]
+        self.costs.push()
+        self.con.push()
 
-        abbrev_parts = first_char_each_part(split_layer_to_parts(layer))
-        return "".join(abbrev_parts).upper()
+    def pop_layer(self):
+        self._layers = self._layers[:-1]
+        self._shape = self._shape[:-1]
+        self.nodes = self.nodes[:-1]
+        self.costs.pop()
+        self.con.pop()
+
+
+    def update_dimension(self, idx:int, new:int):
+        curr = copy(self._shape[idx])
+        if new == curr:
+            return
+
+        diff = new - curr
+        self._shape[idx] = new
+
+        self.refresh_format()
 
 
     def _validate_layer_names(self, layers):
-        abbrevs = self._layers_to_abbrevs(layers)
+        abbrevs = [self.get_abbrev(l) for l in layers]
         assert len(set(abbrevs)) == len(abbrevs), \
                 "\nLayer names must start with different letters.\n" \
                 "You can work around this by using multiple words for layer names\n' \
                 'For instance, 'manufacturing center' becomes 'MC')"
         assert [not s[0].isdigit() for s in abbrevs], \
                 f"Layer names must not start with a number."
+
+
+    def layer_index(self, val) -> int:
+        ''' from int, layer name, or abbrev '''
+        if isinstance(val, int):
+            return val
+        try:
+            layers = [l.lower() for l in self.layers]
+            return layers.index(val.lower())
+        except Exception:
+            abbrevs = [a.lower() for a in self.abbrevs]
+            return abbrevs.index(val.lower())
+
+
+    def node_str_to_layer_and_node_indexes(self, node) -> (int, int):
+        ''' "B4" -> (1, 4), or "A3" -> (0, 3)'''
+        node = node.lower()
+        abb, node_idx = re.search(r"([a-zA-Z]+)(\d+)", node).groups()
+        node_idx = int(node_idx)
+        layer_idx = self.abbrevs.index(abb.upper())
+
+        if node_idx+1 > len(self.nodes[layer_idx]):
+            raise ValueError(f"Node index doesnt exist, {node}")
+
+        return (layer_idx, node_idx)
+
+
+    def range(self, idx=None, start=0, end=0):
+        if idx == None:
+            return range(start, len(self)+end)
+        return range(start, len(self._nodes[idx])+end)
+
+
+    def range_flow(self):
+        return self.range(start=1, end=-1)
+
+
+    def range_stage(self, start=0, end=0):
+        return self.range(end=end-1)
+
+
+    def template_stages(self, fill=np.nan):
+        # formerly edges
+        return [ pd.DataFrame(fill, index=idx, columns=cols)
+            for idx,cols in staged(self.nodes)
+        ]
+
+
+    def template_layers(self, fill=np.nan):
+        # formerly vectors
+        return [ NodeSR(fill, index=nodes)
+            for nodes in self.nodes
+        ]
+
+
+    def template_layer_bounds(self, fill_min=np.nan, fill_max=np.nan):
+        return [ pd.concat( [
+                    NodeSR(fill_min, index=nodes, name='min'),
+                    NodeSR(fill_max, index=nodes, name='max')
+                ],
+                axis=1)
+            for nodes in self.nodes
+        ]
 
 
     @property
@@ -263,7 +370,7 @@ class Model:
 
 
     def __len__(self):
-        return len(self.dv)
+        return len(self.layers)
 
 
 
