@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Sep 26, 2022
+# Last Modified:  Oct 07, 2022
 import pandas as pd
 from dataclasses import dataclass
 
@@ -8,13 +8,23 @@ class NodeSR(pd.Series):
         df = pd.DataFrame(self, columns=[self.name if self.name else ""])
         return df._repr_html_()
 
+    def pop(self):
+        updated = self.iloc[:-1]
+        return NodeSR(updated)
+
 
 class NodeBoundsDF(pd.DataFrame):
     pass
 
 
 class EdgeDF(pd.DataFrame):
-    pass
+
+    def pop(self, axis=0):
+        if axis == 0:
+            updated = self.iloc[:-1]
+        elif axis == 1:
+            updated = self.iloc[:, :-1]
+        return EdgeDF(updated)
 
 
 class EdgeMeltedDF(pd.DataFrame):

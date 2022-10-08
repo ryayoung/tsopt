@@ -13,44 +13,103 @@ from tsopt.container import *
 from tsopt.solved import *
 
 class Model:
-    """
-    Pyomo wrapper for multi-stage transshipment optimization problems,
-    where you have 2 or more location layers, and product transport between them.
-    For example, you have 3 manufacturing plants, 2 distributors, and 5 warehouses,
-    and you need to minimize cost from plant to distributor and from distributor to warehouse,
-    while staying within capacity and meeting demand requirements.
-    """
 
     def __init__(self,
-            layers: list|None = None,
-            edge_costs: list|None = None,
-            excel_file=None,
-            units=None,
+            layers: list[str] = [],
+            dimensions: list[int] = [],
+            excel_file: str|pd.ExcelFile = None,
+            units: str|None = 'units',
         ):
 
-        self._layers = layers
-        self._edge_costs = edge_costs
-        self.excel_file = excel_file
-        self.units = units if units else 'units'
+        self._layers = []
+        self.layers = layers
+        self._dimensions = []
+        self.dimensions = dimensions
 
-        if layers and edge_costs:
-            self.init_model_components()
-
-
-    def init_model_components(self) -> bool:
-        if not self._layers or not self._edge_costs:
-            return False
-        if all(c == None for c in self._edge_costs):
-            return False
-        self.excel_file = pd.ExcelFile(self.excel_file) if isinstance(self.excel_file, str) else self.excel_file
-
-        self.dv = ModelConstants(self, self._layers, self._edge_costs)
+        self.excel_file = pd.ExcelFile(excel_file)
+        self.units = units
         self.pl_mod = None
-
-        # CONSTRAINTS
         self.con = ConstraintsContainer(self)
 
-        return True
+    @property
+    def layers(self): return self._layers
+    @property
+    def dimensions(self): return self._dimensions
+
+    @layers.setter
+    def layers(self, new:list):
+        for layer in new:
+            self.push_layer(layer)
+
+    @dimensions.setter
+    def dimensions(self, new:list):
+        assert len(new) == len(self._dimensions), "Incorrect length"
+        for layer_idx, new_dim in enumerate(new):
+            self.update_dimension(layer_idx, new_dim)
+
+
+    def update_layers(self, new):
+        curr = self._layers
+        def layers_to_abbrevs(layers) -> tuple:
+            split_layer_to_parts = lambda layer: re.split("[ -\._]", layer)
+            first_char_each_part = lambda layer_parts: [s[0] for s in layer_parts]
+
+            abbrev_parts = [ first_char_each_part(split_layer_to_parts(layer)) for layer in layers ]
+            return tuple("".join(parts).upper() for parts in abbrev_parts)
+
+        self.abbrevs = layers_to_abbrevs(new)
+
+        def validate_layer_names(abbrevs) -> None:
+            assert len(set(abbrevs)) == len(abbrevs), \
+                    "\nLayer names must start with different letters.\n" \
+                    "You can work around this by using multiple words for layer names\n' \
+                    'For instance, 'manufacturing center' becomes 'MC')"
+            assert [not s[0].isdigit() for s in abbrevs], \
+                    f"Layer names must not start with a number."
+
+        validate_layer_names(self.abbrevs)
+        self._layers = new
+
+        if len(new) > len(curr):
+            self._dimensions.append(1)
+        if len(new) < len(curr):
+            self._dimensions.append(1)
+
+
+    def update_dimension(self, idx, new):
+        curr = self._dimensions[idx]
+        self._dimensions[idx] = new
+        if new == curr:
+            return
+
+        self.nodes[idx] = self._node_labels(idx, new)
+
+        # Update constraints
+        if new < curr:
+
+
+    def _node_labels(self, idx, length) -> tuple:
+        abbrev = self.abbrevs[layer_idx]
+        return tuple(abbrev + str(n + Global.base) for n in range(0, length))
+
+
+    def _layer_abbrev(self, layer) -> str:
+        split_layer_to_parts = lambda layer: re.split("[ -\._]", layer)
+        first_char_each_part = lambda layer_parts: [s[0] for s in layer_parts]
+
+        abbrev_parts = first_char_each_part(split_layer_to_parts(layer))
+        return "".join(abbrev_parts).upper()
+
+
+    def _validate_layer_names(self, layers):
+        abbrevs = self._layers_to_abbrevs(layers)
+        assert len(set(abbrevs)) == len(abbrevs), \
+                "\nLayer names must start with different letters.\n" \
+                "You can work around this by using multiple words for layer names\n' \
+                'For instance, 'manufacturing center' becomes 'MC')"
+        assert [not s[0].isdigit() for s in abbrevs], \
+                f"Layer names must not start with a number."
+
 
     @property
     def net(self): return self.con.net
