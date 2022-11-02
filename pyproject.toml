@@ -6,13 +6,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tsopt"
-version = "0.0.36"
+version = "0.0.37"
 license = { file = "LICENSE" }
 authors = [
-    { name = "Ryan Young", email = "r5y@pm.me" },
+    { name = "Ryan Young", email = "dev@ryayoung.com" },
 ]
 maintainers = [
-    { name = "Ryan Young", email = "r5y@pm.me" },
+    { name = "Ryan Young", email = "dev@ryayoung.com" },
 ]
 description = "Easily solve any multi-stage transshipment cost minimization optimization problem"
 readme = "README.md"
