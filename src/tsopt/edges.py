@@ -1,9 +1,8 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 08, 2022
+# Last Modified:  Dec 06, 2022
 
 import pandas as pd, numpy as np
 
-from tsopt.globals import *
 from tsopt.types import *
 from tsopt.nodes import *
 
