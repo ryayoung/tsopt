@@ -72,7 +72,7 @@ def _add_func_to_object(name, func=None):
             for obj in objects:
                 setattr(eval(obj), name, func)
 
-def _add_all_funcs_to_objects(obj=None, name=None):
+def _add_all_funcs_to_objects():
     for name,func in list(globals().items()):
         if callable(func) or isinstance(func, property):
             name = name.rstrip('_')
