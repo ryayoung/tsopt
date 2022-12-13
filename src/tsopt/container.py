@@ -7,7 +7,7 @@ from tsopt.values import *
 
 
 class Container:
-    '''
+    """
     Important trick: We want this class's children to inherit the init method below.
     This isn't possible, however, since the capacity and demand variables will
     be of different types depending on the child type (NodeConstraintsContainer would
@@ -16,11 +16,12 @@ class Container:
     and access them dynamically inside the init method using 'self.__class__'. This
     way, child classes can replace their redundant init methods with simple class
     variable declarations, capacity_type and demand_type.
-    '''
+    """
+
     dem_type = None
     cap_type = None
 
-    def __init__(self, mod, demand:list=None, capacity:list=None):
+    def __init__(self, mod, demand: list = None, capacity: list = None):
         self._mod = mod
 
         cls = self.__class__
@@ -40,19 +41,24 @@ class Container:
             self._cap = cls.cap_type(mod)
 
     @property
-    def mod(self): return self._mod
+    def mod(self):
+        return self._mod
+
     @property
-    def dem(self): return self._dem
+    def dem(self):
+        return self._dem
+
     @property
-    def cap(self): return self._cap
+    def cap(self):
+        return self._cap
 
     @dem.setter
-    def dem(self, new:list):
+    def dem(self, new: list):
         for i, elem in enumerate(new):
             self._dem[i] = elem
 
     @cap.setter
-    def cap(self, new:list):
+    def cap(self, new: list):
         for i, elem in enumerate(new):
             self._cap[i] = elem
 
@@ -73,24 +79,22 @@ class Container:
         self.cap.pop_nodes(*args, **kwargs)
 
     # def push(self):
-        # self.dem.push()
-        # self.cap.push()
-# 
+    # self.dem.push()
+    # self.cap.push()
+    #
     # def pop(self):
-        # self.dem.pop()
-        # self.cap.pop()
+    # self.dem.pop()
+    # self.cap.pop()
 
     def sync_length(self, *args, **kwargs):
         self.dem.sync_length(*args, **kwargs)
         self.cap.sync_length(*args, **kwargs)
-
 
     def __len__(self):
         return len(self.cap)
 
     def _repr_html_(self):
         return self.bounds._repr_html_()
-
 
 
 @dataclass
@@ -103,21 +107,20 @@ class NetworkValues:
         return self.dem == None and self.cap == None
 
 
-
 class LayerValuesContainer(Container):
     dem_type = LayerDemandValues
     cap_type = LayerCapacityValues
 
     @property
     def bounds(self):
-        return pd.DataFrame(zip(self.dem, self.cap),
-                    index=self.mod.abbrevs, columns=['dem','cap'])
+        return pd.DataFrame(
+            zip(self.dem, self.cap), index=self.mod.abbrevs, columns=["dem", "cap"]
+        )
 
     @property
     def diff(self):
         diffs = [self.cap[i] - self.dem[i] for i in range(0, len(self))]
         return LayerValues(self.mod, diffs)
-
 
 
 class NodesContainer(Container):
@@ -131,7 +134,6 @@ class NodesContainer(Container):
     @property
     def bounds(self):
         return LayerNodeBounds(self.mod, self.dem, self.cap)
-
 
     @property
     def diff(self):
@@ -159,30 +161,34 @@ class EdgesContainer(Container):
 
     @property
     def bounds(self):
-        ''' Returns MELTED bounds. Index: input. Cols: [output, demand, capacity]'''
+        """Returns MELTED bounds. Index: input. Cols: [output, demand, capacity]"""
         return StageEdgeBoundsMelted(self.mod, self.dem.melted, self.cap.melted)
 
     def get_node_diff(self, new):
         cap_updates = self.cap.nodes_by_layer(new).values()
         dem_updates = self.dem.nodes_by_layer(new).values()
-        diffs = [cap - dem for cap,dem in zip(cap_updates, dem_updates)]
+        diffs = [cap - dem for cap, dem in zip(cap_updates, dem_updates)]
         return NodeConstraints(self.mod, diffs)
 
     @property
     def true_diff(self):
         def stage_diff(i):
             return self.cap.true[i] - self.dem.true[i]
-        return EdgeConstraints(self.mod, [stage_diff(i) for i in range(0, len(self.cap))])
 
+        return EdgeConstraints(
+            self.mod, [stage_diff(i) for i in range(0, len(self.cap))]
+        )
 
     # How can we get the diffs by stage conveniently?
     # @property
     # def node_diff(self):
-        # return self.get_node_diff(True)
-# 
-    # @property
-    # def true_node_diff(self):
-        # return self.get_node_diff(False)
+    # return self.get_node_diff(True)
+
+
+#
+# @property
+# def true_node_diff(self):
+# return self.get_node_diff(False)
 
 
 class ConstraintsContainer:
@@ -191,24 +197,21 @@ class ConstraintsContainer:
         self.node = node if node else NodesContainer(mod)
         self.edge = edge if edge else EdgesContainer(mod)
 
-
     def refactor_nodes(self, *args, **kwargs):
         self.node.refactor_nodes(*args, **kwargs)
         self.edge.refactor_nodes(*args, **kwargs)
 
-
     # def push(self):
-        # self.node.push()
-        # self.edge.push()
-# 
+    # self.node.push()
+    # self.edge.push()
+    #
     # def pop(self):
-        # self.node.pop()
-        # self.edge.pop()
+    # self.node.pop()
+    # self.edge.pop()
 
     def sync_length(self, *args, **kwargs):
         self.node.sync_length(*args, **kwargs)
         self.edge.sync_length(*args, **kwargs)
-
 
     def push_nodes(self, *args, **kwargs):
         self.node.push_nodes(*args, **kwargs)
@@ -217,4 +220,3 @@ class ConstraintsContainer:
     def pop_nodes(self, *args, **kwargs):
         self.node.pop_nodes(*args, **kwargs)
         self.edge.pop_nodes(*args, **kwargs)
-

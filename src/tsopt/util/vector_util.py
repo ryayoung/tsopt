@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 08, 2022
+# Last Modified:  Dec 06, 2022
 
 import pandas as pd
 import numpy as np
@@ -125,5 +125,6 @@ def raw_sr_from_file(name, excel_file=None) -> pd.Series:
     if df.ncols > df.nrows:
         return df.T[0]
     return df[0]
+
 
 

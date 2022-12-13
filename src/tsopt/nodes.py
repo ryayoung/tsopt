@@ -1,5 +1,5 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 08, 2022
+# Last Modified:  Dec 06, 2022
 
 import pandas as pd, numpy as np
 
@@ -9,12 +9,6 @@ from tsopt.values import *
 
 
 class LayerNodes(ListData):
-    dtype = NodeSR
-
-    @property
-    def layer(self):
-        sums = [sr.sum() if not sr.empty else np.nan for sr in self]
-        return LayerValues(self.mod, sums)
 
     @property
     def default_template(self):
@@ -25,6 +19,11 @@ class LayerNodes(ListData):
         sr = sr[sr.columns[0]] if isinstance(sr, pd.DataFrame) else pd.Series(sr)
         sr.index, sr.name = self.mod.nodes[idx], None
         return sr.replace(-1, np.nan).astype(float)
+
+    @property
+    def layer(self):
+        sums = [sr.sum() if not sr.empty else np.nan for sr in self]
+        return LayerValues(self.mod, sums)
 
 
     def loc_to_layer_and_node_indexes(self, loc) -> (int, int or None):
@@ -53,6 +52,7 @@ class LayerNodes(ListData):
     def __setitem__(self, loc, val):
         idx, node = self.loc_to_layer_and_node_indexes(loc)
         if not node:
+            val = self.set_element_format(idx, val)
             super().__setitem__(idx, val)
         else:
             sr = super().__getitem__(idx)
@@ -121,10 +121,10 @@ class NodeConstraints(LayerNodes):
     def notnull(self):
         return ListData(self.mod, [NodeSR(sr[sr.notnull()]) for sr in self])
 
-    @property
-    def flow(self):
-        idx = self.layer.flow.idx
-        return FlowSeries(idx, self[idx])
+    # @property
+    # def flow(self):
+        # idx = self.layer.flow.idx
+        # return FlowSeries(idx, self[idx])
 
     @property
     def full(self):

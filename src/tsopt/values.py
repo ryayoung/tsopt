@@ -1,7 +1,27 @@
 # Maintainer:     Ryan Young
-# Last Modified:  Oct 08, 2022
+# Last Modified:  Dec 06, 2022
 import pandas as pd, numpy as np
 from tsopt.types import *
+
+@dataclass
+class FlowVal:
+    idx: int
+    val: float
+
+    def __repr__(self):
+        return self.val.__repr__()
+
+
+@dataclass
+class FlowSeries:
+    idx: int
+    sr: NodeSR
+
+    def __repr__(self):
+        return self.sr.__repr__()
+
+    def _repr_html_(self):
+        return self.sr._repr_html_()
 
 
 class LayerValues(ListData):
@@ -20,7 +40,7 @@ class LayerValues(ListData):
         super().__setitem__(idx, val)
 
     def _repr_html_(self):
-        sr = NodeSR(self, index=self.mod.abbrevs)
+        sr = pd.Series(self, index=self.mod.abbrevs)
         return sr._repr_html_()
 
 

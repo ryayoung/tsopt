@@ -448,6 +448,14 @@ def shape__(df, key=None) -> DFShape or SRShape:
         return df.shape[key]
     return df.shape
 
+# ----------------------------------------------------------------------------
+
+def _repr_html(self):
+    """
+    ::pd.Series
+    """
+    df = pd.DataFrame(self, columns=[self.name if self.name else ""])
+    return df._repr_html()
 
 # ----------------------------------------------------------------------------
 # ----------------------------------------------------------------------------

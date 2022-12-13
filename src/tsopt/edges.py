@@ -7,16 +7,10 @@ from tsopt.types import *
 from tsopt.nodes import *
 
 class StageEdges(ListData):
-    dtype = EdgeDF
 
     @property
     def default_template(self):
         return self.mod.template_stages()
-
-    @property
-    def melted(self):
-        return StageEdgesMelted(self.mod, self)
-
 
     def set_element_format(self, idx, df):
         curr = super().__getitem__(idx)
@@ -27,6 +21,9 @@ class StageEdges(ListData):
         df.index, df.columns, = self.mod.stage_nodes[idx]
         return df.replace(-1, np.nan).astype(float)
 
+    @property
+    def melted(self):
+        return StageEdgesMelted(self.mod, self)
 
     @staticmethod
     def find_node(df, loc) -> (int, int):
@@ -85,6 +82,7 @@ class StageEdges(ListData):
     def __setitem__(self, loc, val):
         df, idx, node_slice = self.loc_to_df_stage_and_slice(loc)
         if node_slice == None:
+            val = self.set_element_format(idx, val)
             super().__setitem__(idx, val)
         else:
             if isinstance(val, int):
@@ -97,12 +95,6 @@ class StageEdges(ListData):
     def load(self, loc, filename, excel_file=None) -> None:
         excel = excel_file if excel_file else self.mod.excel_file
         self[loc] = raw_df_from_file(filename, excel)
-
-
-    # def push(self, fill_val=np.nan):
-        # assert len(self) <= len(self.mod.nodes)-2, f"Can't push until new nodes are added. Nodes loaded for {len(self.mod.nodes)} layers. Self is {len(self)} length."
-        # idxs, cols = tuple(staged(self.mod.nodes))[-1]
-        # self.append(self.cls_dtype(fill_val, index=idxs, columns=cols))
 
 
     def sync_length(self, fill_val=np.nan):
